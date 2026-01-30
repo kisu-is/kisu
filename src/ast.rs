@@ -1,6 +1,12 @@
 use crate::lexer::TokenKind;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Binding {
+    pub name: String,
+    pub expr: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
     String(String),
@@ -19,6 +25,13 @@ pub enum Expr {
         body: Box<Expr>,
     },
     Paren(Box<Expr>),
+    Block {
+        bindings: Vec<Binding>,
+        expr: Box<Expr>,
+    },
+    Map {
+        bindings: Vec<Binding>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

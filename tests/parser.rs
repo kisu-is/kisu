@@ -1,4 +1,8 @@
-use kisu::{BinaryOp, Expr, Parser, TokenIter, UnaryOp};
+use kisu::{
+    ast::{BinaryOp, Expr, UnaryOp},
+    lexer::TokenIter,
+    parser::Parser,
+};
 use logos::Lexer;
 
 #[test]

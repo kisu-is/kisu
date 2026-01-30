@@ -27,7 +27,8 @@ named_lambda = "{" ident ("," ident)* "}" ":" expr ;
 
 app = expr expr ;
 
-block_expr = "{" bind* expr "}" ;
+block = "{" block_expr | map "}" ;
+block_expr = bind* expr ;
+map = bind* ;
 
-map = "{" bind* "}" ;
 ```

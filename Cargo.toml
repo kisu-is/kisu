@@ -5,3 +5,10 @@ edition = "2024"
 
 [dependencies]
 logos = "0.16.0"
+thiserror = "2.0.18"
+
+[workspace]
+members = ["cli"]
+
+[dev-dependencies]
+indoc = "2.0.7"

@@ -1,41 +1,43 @@
-use crate::ast::{BinaryOp, Expr, UnaryOp};
+use crate::ast::{BinaryOp, Binding, Expr, UnaryOp};
 use crate::lexer::{Token, TokenIter, TokenKind};
 use logos::Span;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ParseError {
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum Error {
+    #[error("unexpected token (expected {expected:?}, found {found:?})")]
     UnexpectedToken {
         expected: TokenKind,
         found: Option<TokenKind>,
         span: Option<Span>,
     },
+    #[error("expected number, found {found:?}")]
     ExpectedNumber {
         found: Option<TokenKind>,
         span: Option<Span>,
     },
+    #[error("expected string, found {found:?}")]
     ExpectedString {
         found: Option<TokenKind>,
         span: Option<Span>,
     },
+    #[error("expected identifier, found {found:?}")]
     ExpectedIdentifier {
         found: Option<TokenKind>,
         span: Option<Span>,
     },
 
-    InvalidNumber {
-        span: Span,
-    },
-    ExpectedEof {
-        found: TokenKind,
-        span: Span,
-    },
+    #[error("invalid number")]
+    InvalidNumber { span: Span },
+
+    #[error("expected EOF, found {found:?})")]
+    ExpectedEof { found: TokenKind, span: Span },
 }
 
 pub struct Parser<'a> {
     source: &'a str,
     tokens: TokenIter<'a>,
     current_token: Option<Token>,
-    lookahead: Option<Token>,
+    next_token: Option<Token>,
 }
 
 impl<'a> Parser<'a> {
@@ -44,7 +46,7 @@ impl<'a> Parser<'a> {
             source,
             tokens: lexer,
             current_token: None,
-            lookahead: None,
+            next_token: None,
         };
 
         parser.advance();
@@ -55,8 +57,8 @@ impl<'a> Parser<'a> {
 
     #[inline]
     fn advance(&mut self) {
-        self.current_token = self.lookahead.take();
-        self.lookahead = self.tokens.next();
+        self.current_token = self.next_token.take();
+        self.next_token = self.tokens.next();
     }
 
     #[inline]
@@ -65,8 +67,8 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    pub fn lookahead(&self) -> Option<&Token> {
-        self.lookahead.as_ref()
+    pub fn next(&self) -> Option<&Token> {
+        self.next_token.as_ref()
     }
 
     #[inline]
@@ -77,8 +79,8 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    pub fn check_lookahead(&self, kind: &crate::lexer::TokenKind) -> bool {
-        self.lookahead
+    pub fn check_next(&self, kind: &crate::lexer::TokenKind) -> bool {
+        self.next_token
             .as_ref()
             .is_some_and(|token| &token.kind == kind)
     }
@@ -101,7 +103,7 @@ impl<'a> Parser<'a> {
 
     #[inline]
     pub fn is_eof(&self) -> bool {
-        self.current_token.is_none() && self.lookahead.is_none()
+        self.current_token.is_none() && self.next_token.is_none()
     }
 
     #[inline]
@@ -138,10 +140,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect(&mut self, kind: TokenKind) -> Result<Token, ParseError> {
+    fn expect(&mut self, kind: TokenKind) -> Result<Token, Error> {
         match self.check_consume(&kind) {
             Some(token) => Ok(token),
-            None => Err(ParseError::UnexpectedToken {
+            None => Err(Error::UnexpectedToken {
                 expected: kind,
                 found: self.token_kind().cloned(),
                 span: self.token_span(),
@@ -149,24 +151,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn number(&mut self) -> Result<Expr, ParseError> {
+    fn number(&mut self) -> Result<Expr, Error> {
         if let Some(TokenKind::Number) = self.token_kind() {
             let token = self.consume().unwrap();
             let span = token.span;
             let lexeme = &self.source[span.start..span.end];
             let value = lexeme
                 .parse::<f64>()
-                .map_err(|_| ParseError::InvalidNumber { span: span.clone() })?;
+                .map_err(|_| Error::InvalidNumber { span: span.clone() })?;
             Ok(Expr::Number(value))
         } else {
-            Err(ParseError::ExpectedNumber {
+            Err(Error::ExpectedNumber {
                 found: self.token_kind().cloned(),
                 span: self.token_span(),
             })
         }
     }
 
-    fn string(&mut self) -> Result<Expr, ParseError> {
+    fn string(&mut self) -> Result<Expr, Error> {
         if let Some(TokenKind::String) = self.token_kind() {
             let token = self.consume().unwrap();
             let span = token.span;
@@ -176,65 +178,99 @@ impl<'a> Parser<'a> {
             let content = &lexeme[1..lexeme.len() - 1];
             Ok(Expr::String(content.to_string()))
         } else {
-            Err(ParseError::ExpectedString {
+            Err(Error::ExpectedString {
                 found: self.token_kind().cloned(),
                 span: self.token_span(),
             })
         }
     }
 
-    fn ident(&mut self) -> Result<Expr, ParseError> {
+    fn ident(&mut self) -> Result<Expr, Error> {
         if let Some(TokenKind::Ident) = self.token_kind() {
             let token = self.consume().unwrap();
             let span = token.span;
             let name = &self.source[span.start..span.end];
             Ok(Expr::Ident(name.to_string()))
         } else {
-            Err(ParseError::ExpectedIdentifier {
+            Err(Error::ExpectedIdentifier {
                 found: self.token_kind().cloned(),
                 span: self.token_span(),
             })
         }
     }
 
-    fn expect_eof(&mut self) -> Result<(), ParseError> {
+    fn expect_eof(&mut self) -> Result<(), Error> {
         if self.is_eof() {
             Ok(())
         } else {
             let token = self.current_token.as_ref().unwrap();
-            Err(ParseError::ExpectedEof {
+            Err(Error::ExpectedEof {
                 found: token.kind.clone(),
                 span: token.span.clone(),
             })
         }
     }
 
-    fn paren_expr(&mut self) -> Result<Expr, ParseError> {
+    fn paren_expr(&mut self) -> Result<Expr, Error> {
         self.expect(TokenKind::ParenL)?;
         let expr = self.expr()?;
         self.expect(TokenKind::ParenR)?;
         Ok(Expr::Paren(Box::new(expr)))
     }
 
-    fn atom(&mut self) -> Result<Expr, ParseError> {
+    fn block(&mut self) -> Result<Expr, Error> {
+        self.expect(TokenKind::BraceL)?;
+
+        let mut bindings = Vec::new();
+
+        while self.check(&TokenKind::Ident) && self.check_next(&TokenKind::Assign) {
+            let name = match self.ident()? {
+                Expr::Ident(name) => name,
+                _ => unreachable!(),
+            };
+            self.expect(TokenKind::Assign)?;
+            let expr = self.expr()?;
+            self.expect(TokenKind::Semicolon)?;
+
+            bindings.push(Binding {
+                name,
+                expr: Box::new(expr),
+            });
+        }
+
+        if self.check_consume(&TokenKind::BraceR).is_some() {
+            return Ok(Expr::Map { bindings });
+        }
+
+        let expr = self.expr()?;
+        self.expect(TokenKind::BraceR)?;
+
+        Ok(Expr::Block {
+            bindings,
+            expr: Box::new(expr),
+        })
+    }
+
+    fn atom(&mut self) -> Result<Expr, Error> {
         match self.token_kind() {
             Some(TokenKind::Number) => self.number(),
             Some(TokenKind::String) => self.string(),
             Some(TokenKind::Ident) => self.ident(),
             Some(TokenKind::ParenL) => self.paren_expr(),
-            _ => Err(ParseError::UnexpectedToken {
-                expected: TokenKind::Return,
+            Some(TokenKind::BraceL) => self.block(),
+            _ => Err(Error::UnexpectedToken {
+                expected: TokenKind::Eof,
                 found: self.token_kind().cloned(),
                 span: self.token_span(),
             }),
         }
     }
 
-    pub fn expr(&mut self) -> Result<Expr, ParseError> {
+    pub fn expr(&mut self) -> Result<Expr, Error> {
         self.binary_expr(0)
     }
 
-    fn binary_expr(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
+    fn binary_expr(&mut self, min_precedence: u8) -> Result<Expr, Error> {
         let mut lhs = self.unary_expr()?;
 
         while let Some(op) = self.binary_op() {
@@ -258,7 +294,7 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
-    fn unary_expr(&mut self) -> Result<Expr, ParseError> {
+    fn unary_expr(&mut self) -> Result<Expr, Error> {
         if let Some(op) = self.unary_op() {
             self.consume();
 
@@ -273,7 +309,7 @@ impl<'a> Parser<'a> {
         self.atom()
     }
 
-    pub fn parse_program(&mut self) -> Result<Expr, ParseError> {
+    pub fn parse_program(&mut self) -> Result<Expr, Error> {
         let expr = self.expr()?;
         self.expect_eof()?;
         Ok(expr)

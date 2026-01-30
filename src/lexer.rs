@@ -3,11 +3,8 @@ use logos::{Lexer, Logos, Span, SpannedIter};
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\f]+")]
 pub enum TokenKind {
-    #[token(r"return")]
-    Return,
-
     #[token("=")]
-    Equals,
+    Assign,
     #[token("+")]
     Add,
     #[token("-")]
@@ -28,8 +25,6 @@ pub enum TokenKind {
 
     #[token(":")]
     Colon,
-    #[token("=>")]
-    FatArrow,
     #[token(";")]
     Semicolon,
     #[token(",")]
