@@ -5,8 +5,9 @@ string = r/"([^"\\]|\\.)*"/ ;
 
 literal = number | string ;
 
-bind = ident "=" expr ";"
-     | ident ";" ;
+key = ident | string ;
+bind = key "=" expr ";"
+     | key ";" ;
 
 program = expr ;
 

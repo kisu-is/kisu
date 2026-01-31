@@ -92,6 +92,23 @@ fn map() {
 }
 
 #[test]
+fn map_string_key() {
+    use std::collections::HashMap;
+    let mut expected = HashMap::new();
+    expected.insert("a".to_string(), Value::Number(10.0));
+    expected.insert("b".to_string(), Value::Number(20.0));
+
+    assert_eval!(
+        r#"
+        {
+            "a" = 10;
+            "b" = 20;
+        }"#,
+        Value::Map(expected)
+    );
+}
+
+#[test]
 fn inherit() {
     use std::collections::HashMap;
     let mut map = HashMap::new();
@@ -106,6 +123,27 @@ fn inherit() {
             x = "hello";
             y = {
                 x;
+            };
+        }"#,
+        Value::Map(map)
+    );
+}
+
+#[test]
+fn inherit_string_key() {
+    use std::collections::HashMap;
+    let mut map = HashMap::new();
+    map.insert("a b".to_string(), Value::String("hello".to_owned()));
+    let mut map2 = HashMap::new();
+    map2.insert("a b".to_string(), Value::String("hello".to_owned()));
+    map.insert("c".to_string(), Value::Map(map2));
+
+    assert_eval!(
+        r#"
+        {
+            "a b" = "hello";
+            c = {
+                "a b";
             };
         }"#,
         Value::Map(map)

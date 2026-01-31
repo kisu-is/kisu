@@ -219,16 +219,30 @@ impl<'a> Parser<'a> {
         Ok(Expr::Paren(Box::new(expr)))
     }
 
+    fn key(&mut self) -> Result<Expr, Error> {
+        if let Ok(ident) = self.ident() {
+            Ok(ident)
+        } else if let Ok(string) = self.string() {
+            Ok(string)
+        } else {
+            Err(Error::ExpectedIdentifier {
+                found: self.token_kind().cloned(),
+                span: self.token_span(),
+            })
+        }
+    }
+
     fn block(&mut self) -> Result<Expr, Error> {
         self.expect(TokenKind::BraceL)?;
 
         let mut bindings = Vec::new();
 
-        while self.check(&TokenKind::Ident)
+        while (self.check(&TokenKind::Ident) || self.check(&TokenKind::String))
             && (self.check_next(&TokenKind::Assign) || self.check_next(&TokenKind::Semicolon))
         {
-            let name = match self.ident()? {
+            let name = match self.key()? {
                 Expr::Ident(name) => name,
+                Expr::String(string) => string,
                 _ => unreachable!(),
             };
 
