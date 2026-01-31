@@ -23,7 +23,7 @@ binary = expr ("+" | "-" | "*" | "/" | "==" | "!=" | "<" | ">" | "<=" | ">=") ex
 unary = ("-" | "!" ) expr ;
 
 lambda = ident ":" expr ;
-named_lambda = "{" ident ("," ident)* "}" ":" expr ;
+named_lambda = "{" ident (";" ident)* "}" ":" expr ;
 
 app = expr expr ;
 

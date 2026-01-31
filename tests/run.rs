@@ -90,3 +90,39 @@ fn map() {
         Value::Map(expected)
     );
 }
+
+#[test]
+fn lambda() {
+    assert_eval!(
+        "
+        {
+            add_one = x: x + 1;
+            add_one 2
+        }",
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn named_lambda() {
+    assert_eval!(
+        "
+        {
+            add = {l;r}: l + r;
+            add {l = 2; r = 3;}
+        }",
+        Value::Number(5.0)
+    );
+}
+
+#[test]
+fn lambda_currying() {
+    assert_eval!(
+        "
+        {
+            add = l: r: l + r;
+            add 2 3
+        }",
+        Value::Number(5.0)
+    );
+}

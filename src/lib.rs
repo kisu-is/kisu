@@ -14,7 +14,7 @@ pub mod parser;
 pub fn run(source: &str) -> Result<Value, Error> {
     let lexer = Lexer::new(source);
     let mut parser = Parser::new(TokenIter::from(lexer), source);
-    let expr = parser.parse_program()?;
+    let expr = parser.parse()?;
     let mut env = Scope::new();
     Ok(eval::eval(&expr, &mut env)?)
 }

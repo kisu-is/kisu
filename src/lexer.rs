@@ -53,6 +53,9 @@ pub enum TokenKind {
     Number,
     #[allow(dead_code)]
     Eof,
+
+    #[allow(dead_code)]
+    None,
 }
 
 #[derive(Clone)]
@@ -70,6 +73,7 @@ impl Token {
     }
 }
 
+#[derive(Clone)]
 pub struct TokenIter<'a> {
     iter: SpannedIter<'a, TokenKind>,
 }

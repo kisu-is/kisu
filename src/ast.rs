@@ -21,7 +21,7 @@ pub enum Expr {
         right: Box<Expr>,
     },
     Lambda {
-        param: String,
+        params: Vec<String>,
         body: Box<Expr>,
     },
     Paren(Box<Expr>),
@@ -31,6 +31,10 @@ pub enum Expr {
     },
     Map {
         bindings: Vec<Binding>,
+    },
+    App {
+        func: Box<Expr>,
+        arg: Box<Expr>,
     },
 }
 

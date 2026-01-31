@@ -33,9 +33,12 @@ pub enum Error {
     ExpectedEof { found: TokenKind, span: Span },
 }
 
+#[derive(Clone)]
 pub struct Parser<'a> {
     source: &'a str,
     tokens: TokenIter<'a>,
+    // NOTE: could use larger lookahead than LL(2)?
+    // to disambiguate named lambdas from other blocks
     current_token: Option<Token>,
     next_token: Option<Token>,
 }
@@ -152,8 +155,7 @@ impl<'a> Parser<'a> {
     }
 
     fn number(&mut self) -> Result<Expr, Error> {
-        if let Some(TokenKind::Number) = self.token_kind() {
-            let token = self.consume().unwrap();
+        if let Some(token) = self.check_consume(&TokenKind::Number) {
             let span = token.span;
             let lexeme = &self.source[span.start..span.end];
             let value = lexeme
@@ -169,8 +171,7 @@ impl<'a> Parser<'a> {
     }
 
     fn string(&mut self) -> Result<Expr, Error> {
-        if let Some(TokenKind::String) = self.token_kind() {
-            let token = self.consume().unwrap();
+        if let Some(token) = self.check_consume(&TokenKind::String) {
             let span = token.span;
             let lexeme = &self.source[span.start..span.end];
 
@@ -186,10 +187,10 @@ impl<'a> Parser<'a> {
     }
 
     fn ident(&mut self) -> Result<Expr, Error> {
-        if let Some(TokenKind::Ident) = self.token_kind() {
-            let token = self.consume().unwrap();
+        if let Some(token) = self.check_consume(&TokenKind::Ident) {
             let span = token.span;
             let name = &self.source[span.start..span.end];
+
             Ok(Expr::Ident(name.to_string()))
         } else {
             Err(Error::ExpectedIdentifier {
@@ -251,15 +252,59 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn lambda(&mut self) -> Result<Expr, Error> {
+        let params = if self.check(&TokenKind::Ident) && self.check_next(&TokenKind::Colon) {
+            let param_token = self.expect(TokenKind::Ident)?;
+            let param_name = self.source[param_token.span.start..param_token.span.end].to_string();
+            vec![param_name]
+        } else {
+            self.expect(TokenKind::BraceL)?;
+            let mut params = Vec::new();
+            if let Some(param_token) = self.check_consume(&TokenKind::Ident) {
+                params.push(self.source[param_token.span.start..param_token.span.end].to_string());
+                while self.check_consume(&TokenKind::Semicolon).is_some() {
+                    let param_token = self.expect(TokenKind::Ident)?;
+                    params.push(
+                        self.source[param_token.span.start..param_token.span.end].to_string(),
+                    );
+                }
+            }
+            self.expect(TokenKind::BraceR)?;
+            params
+        };
+
+        self.expect(TokenKind::Colon)?;
+        let body = self.expr()?;
+        Ok(Expr::Lambda {
+            params,
+            body: Box::new(body),
+        })
+    }
+
     fn atom(&mut self) -> Result<Expr, Error> {
         match self.token_kind() {
             Some(TokenKind::Number) => self.number(),
             Some(TokenKind::String) => self.string(),
-            Some(TokenKind::Ident) => self.ident(),
+            Some(TokenKind::Ident) => {
+                if self.check_next(&TokenKind::Colon) {
+                    self.lambda()
+                } else {
+                    self.ident()
+                }
+            }
             Some(TokenKind::ParenL) => self.paren_expr(),
-            Some(TokenKind::BraceL) => self.block(),
+            Some(TokenKind::BraceL) => {
+                let mut temp_parser = self.clone();
+                match temp_parser.lambda() {
+                    Ok(expr @ Expr::Lambda { .. }) => {
+                        *self = temp_parser;
+                        Ok(expr)
+                    }
+                    _ => self.block(),
+                }
+            }
             _ => Err(Error::UnexpectedToken {
-                expected: TokenKind::Eof,
+                expected: self.token_kind().unwrap_or(&TokenKind::None).clone(),
                 found: self.token_kind().cloned(),
                 span: self.token_span(),
             }),
@@ -294,22 +339,50 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
+    fn app(&mut self, mut func: Expr) -> Result<Expr, Error> {
+        while let Some(token_kind) = self.token_kind() {
+            match token_kind {
+                TokenKind::ParenL | TokenKind::BraceL | TokenKind::String | TokenKind::Number => {
+                    let arg = self.atom()?;
+                    func = Expr::App {
+                        func: Box::new(func),
+                        arg: Box::new(arg),
+                    };
+                }
+                TokenKind::Ident => {
+                    // make sure its not a lambda
+                    if !self.check_next(&TokenKind::Colon) {
+                        let arg = self.atom()?;
+                        func = Expr::App {
+                            func: Box::new(func),
+                            arg: Box::new(arg),
+                        };
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok(func)
+    }
+
     fn unary_expr(&mut self) -> Result<Expr, Error> {
         if let Some(op) = self.unary_op() {
             self.consume();
 
             let expr = self.unary_expr()?;
 
-            return Ok(Expr::Unary {
+            let func = Expr::Unary {
                 op,
                 expr: Box::new(expr),
-            });
+            };
+            return self.app(func);
         }
 
-        self.atom()
+        let atom_expr = self.atom()?;
+        self.app(atom_expr)
     }
 
-    pub fn parse_program(&mut self) -> Result<Expr, Error> {
+    pub fn parse(&mut self) -> Result<Expr, Error> {
         let expr = self.expr()?;
         self.expect_eof()?;
         Ok(expr)
