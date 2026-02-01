@@ -23,6 +23,8 @@ pub enum Error {
     IdentifierNotFound(String),
     #[error("stack underflow")]
     StackUnderflow,
+    #[error("tried accessing a map with invalid parameters")]
+    InvalidMapAccess,
 }
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -324,6 +326,21 @@ impl<'ast> ast::Visitor<'ast> for TreeWalker {
             result.push(self.stack_pop()?);
         }
         self.stack_push(Value::List(result));
+        Ok(())
+    }
+
+    fn visit_map_access(
+        &mut self,
+        expr: &'ast Expr,
+        ident: &'ast ast::Ident,
+    ) -> Result<(), Self::Err> {
+        self.visit_expr(expr)?;
+        let result = match self.stack_pop()? {
+            Value::Map(map) => map.get(&ident.name).cloned().ok_or(Error::InvalidMapAccess),
+            _ => Err(Error::InvalidMapAccess),
+        }?;
+
+        self.stack_push(result);
         Ok(())
     }
 }

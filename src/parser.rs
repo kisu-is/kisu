@@ -131,6 +131,7 @@ impl<'a> Parser<'a> {
             Some(TokenKind::Gt) => Some(BinaryOp::Gt),
             Some(TokenKind::LtEq) => Some(BinaryOp::LtEq),
             Some(TokenKind::GtEq) => Some(BinaryOp::GtEq),
+            Some(TokenKind::Dot) => Some(BinaryOp::Dot),
             _ => None,
         }
     }
@@ -281,7 +282,7 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::BracketR) {
             let expr = self.expr()?;
             exprs.push(expr);
-            if !self.check_consume(&TokenKind::Semicolon).is_some()
+            if self.check_consume(&TokenKind::Semicolon).is_none()
                 && self.check_next(&TokenKind::BracketR)
             {
                 break;
@@ -384,13 +385,25 @@ impl<'a> Parser<'a> {
 
             self.consume();
 
-            let rhs = self.binary_expr(precedence + 1)?;
+            if op == BinaryOp::Dot {
+                let ident = match self.key()? {
+                    Expr::Ident(name) => Ok(name),
+                    Expr::String(string) => Ok(ast::Ident { name: string.0 }),
+                    _ => unreachable!(),
+                }?;
 
-            lhs = Expr::Binary {
-                op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-            };
+                lhs = Expr::MapAccess {
+                    expr: Box::new(lhs),
+                    ident,
+                };
+            } else {
+                let rhs = self.binary_expr(precedence + 1)?;
+                lhs = Expr::Binary {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                };
+            }
         }
 
         Ok(lhs)

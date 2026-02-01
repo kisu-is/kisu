@@ -22,7 +22,7 @@ expr = ident
      | binary
      | app ;
 
-binary = expr ("+" | "-" | "*" | "/" | "==" | "!=" | "<" | ">" | "<=" | ">=") expr ;
+binary = expr ("+" | "-" | "*" | "/" | "==" | "!=" | "<" | ">" | "<=" | ">=" | ".") expr ;
 unary = ("-" | "!" ) expr ;
 
 lambda = ident ":" expr ;

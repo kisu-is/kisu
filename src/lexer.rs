@@ -29,6 +29,8 @@ pub enum TokenKind {
     Semicolon,
     #[token(",")]
     Comma,
+    #[token(".")]
+    Dot,
 
     #[token("==")]
     Eq,

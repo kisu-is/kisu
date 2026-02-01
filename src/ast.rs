@@ -103,6 +103,10 @@ pub enum Expr {
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
+    MapAccess {
+        expr: Box<Expr>,
+        ident: Ident,
+    },
     Lambda {
         params: Vec<String>,
         body: Box<Expr>,
@@ -138,11 +142,13 @@ pub enum BinaryOp {
     Gt,
     LtEq,
     GtEq,
+    Dot,
 }
 
 impl BinaryOp {
     pub fn precedence(&self) -> u8 {
         match self {
+            BinaryOp::Dot => 5,
             BinaryOp::Mul | BinaryOp::Div => 4,
             BinaryOp::Add | BinaryOp::Sub => 3,
             BinaryOp::Eq
@@ -166,6 +172,7 @@ impl BinaryOp {
             BinaryOp::Gt => TokenKind::Gt,
             BinaryOp::LtEq => TokenKind::LtEq,
             BinaryOp::GtEq => TokenKind::GtEq,
+            BinaryOp::Dot => TokenKind::Dot,
         }
     }
 }
@@ -185,6 +192,7 @@ pub trait Visitor<'ast>: Sized {
             Expr::App { lhs, rhs } => self.visit_app(lhs, rhs),
             Expr::Ident(ident) => self.visit_ident(ident),
             Expr::List(list) => self.visit_list(list),
+            Expr::MapAccess { expr, ident } => self.visit_map_access(expr, ident),
         }
     }
 
@@ -208,4 +216,5 @@ pub trait Visitor<'ast>: Sized {
     fn visit_app(&mut self, lhs: &'ast Expr, rhs: &'ast Expr) -> Result<(), Self::Err>;
     fn visit_lambda(&mut self, params: &'ast [String], body: &'ast Expr) -> Result<(), Self::Err>;
     fn visit_list(&mut self, list: &'ast List) -> Result<(), Self::Err>;
+    fn visit_map_access(&mut self, expr: &'ast Expr, ident: &'ast Ident) -> Result<(), Self::Err>;
 }

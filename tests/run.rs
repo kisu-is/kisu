@@ -92,6 +92,18 @@ fn map() {
 }
 
 #[test]
+fn map_access() {
+    assert_eval!(
+        "
+        {
+            map = { a = 5; };
+            map.a
+        }",
+        Value::Number(5.0.into())
+    );
+}
+
+#[test]
 fn map_string_key() {
     use std::collections::HashMap;
     let mut expected = HashMap::new();
