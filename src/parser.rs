@@ -102,7 +102,10 @@ impl<'a> Parser<'a> {
     #[inline]
     fn advance(&mut self) {
         std::mem::swap(&mut self.next_token, &mut self.current_token);
-        self.next_token = self.tokens.next().unwrap_or(Token::EOF);
+        self.next_token = self.tokens.next().unwrap_or(Token {
+            kind: TokenKind::Eof,
+            span: self.token_span().clone(),
+        });
     }
 
     #[inline]
@@ -138,7 +141,10 @@ impl<'a> Parser<'a> {
         let mut token = Token::NONE;
         std::mem::swap(&mut token, &mut self.current_token);
         std::mem::swap(&mut self.next_token, &mut self.current_token);
-        self.next_token = self.tokens.next().unwrap_or(Token::EOF);
+        self.next_token = self.tokens.next().unwrap_or(Token {
+            kind: TokenKind::Eof,
+            span: self.token_span().clone(),
+        });
         token
     }
 

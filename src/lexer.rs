@@ -82,11 +82,6 @@ impl Token {
         kind: TokenKind::None,
         span: 0..0,
     };
-
-    pub const EOF: Self = Self {
-        kind: TokenKind::Eof,
-        span: 0..0,
-    };
 }
 
 #[derive(Clone)]
