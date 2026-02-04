@@ -25,10 +25,11 @@ unary = ("-" | "!" ) expr ;
 app = expr expr ;
 key = ident | string ;
 
-bind = key "=" expr ";"
-     | key ";" ;
+bind_item = key "=" expr
+     | key ;
+bind = bind_item ";" ;
 
-lambda = "{" bind* "}" ":" expr ;
+lambda = "{" bind* bind_item? "}" ":" expr ;
 
 block = "(" bind* expr ")" ;
 map = "{" bind* "}" ;
