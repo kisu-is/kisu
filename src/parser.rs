@@ -4,7 +4,7 @@ use logos::Span;
 
 pub use _hide_warnings::*;
 
-// weird warning bug with the miette+thiserror macros
+// weird warning bug with the miette macros
 mod _hide_warnings {
     #![allow(unused_assignments)]
 
@@ -12,10 +12,9 @@ mod _hide_warnings {
     use miette::{Diagnostic, SourceSpan};
 
     #[derive(thiserror::Error, Diagnostic, Debug)]
-    #[error("error parsing")]
     #[diagnostic(code(kisu::parser))]
     pub enum Error {
-        #[error("unexpected token (expected {expected:?}, found {found:?}")]
+        #[error("unexpected token (expected {expected:?}, found {found:?})")]
         UnexpectedToken {
             expected: TokenKind,
             found: TokenKind,
@@ -23,55 +22,44 @@ mod _hide_warnings {
             span: SourceSpan,
         },
         #[error("expected number, found {found:?}")]
-        #[diagnostic()]
         ExpectedNumber {
             found: TokenKind,
             #[label("expected a number")]
             span: SourceSpan,
         },
         #[error("expected string, found {found:?}")]
-        #[diagnostic()]
         ExpectedString {
             found: TokenKind,
             #[label("expected a string")]
             span: SourceSpan,
         },
         #[error("expected identifier, found {found:?}")]
-        #[diagnostic()]
         ExpectedIdentifier {
             found: TokenKind,
             #[label("expected an identifier")]
             span: SourceSpan,
         },
-
         #[error("invalid number")]
-        #[diagnostic()]
         InvalidNumber {
             #[label("invalid number")]
             span: SourceSpan,
         },
-
         #[error("expected EOF, found {found:?}")]
-        #[diagnostic()]
         ExpectedEof {
             found: TokenKind,
             #[label("expected end of file")]
             span: SourceSpan,
         },
-
         #[error("expected expression, found {found:?}")]
-        #[diagnostic()]
         ExpectedExpr {
             found: TokenKind,
             #[label("expected expression")]
             span: SourceSpan,
         },
-
-        #[error("missing operand for operator {op:?}")]
-        #[diagnostic()]
-        MissingOperand {
+        #[error("invalid operand for operator {op:?}")]
+        InvalidOperand {
             op: TokenKind,
-            #[label("missing operand")]
+            #[label("invalid operand")]
             span: SourceSpan,
         },
     }
@@ -431,13 +419,6 @@ impl<'a> Parser<'a> {
 
             let op_token = self.consume();
 
-            if self.current().kind == TokenKind::Eof {
-                return Err(Error::MissingOperand {
-                    op: op_token.kind,
-                    span: op_token.span.into(),
-                });
-            }
-
             if op == BinaryOp::Dot {
                 let key = self.key()?;
 
@@ -445,13 +426,17 @@ impl<'a> Parser<'a> {
                     expr: Box::new(lhs),
                     ident: key,
                 };
-            } else {
-                let rhs = self.binary_expr(precedence + 1)?;
+            } else if let Ok(rhs) = self.binary_expr(precedence + 1) {
                 lhs = Expr::Binary {
                     op,
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
                 };
+            } else {
+                return Err(Error::InvalidOperand {
+                    op: op_token.kind,
+                    span: op_token.span.into(),
+                });
             }
         }
 
