@@ -143,33 +143,33 @@ fn inherit() {
     );
 }
 
-// #[test]
-// fn inherit_string_key() {
-//     use std::collections::HashMap;
-//     let mut map = HashMap::new();
-//     map.insert("a b".to_string(), Value::String("hello".into()));
-//     let mut map2 = HashMap::new();
-//     map2.insert("a b".to_string(), Value::String("hello".into()));
-//     map.insert("c".to_string(), Value::Map(map2));
+#[test]
+fn inherit_string_key() {
+    use std::collections::HashMap;
+    let mut map = HashMap::new();
+    map.insert("a b".to_string(), Value::String("hello".into()));
+    let mut map2 = HashMap::new();
+    map2.insert("a b".to_string(), Value::String("hello".into()));
+    map.insert("c".to_string(), Value::Map(map2));
 
-//     assert_eval!(
-//         r#"
-//         {
-//             "a b" = "hello";
-//             c = {
-//                 "a b";
-//             };
-//         }"#,
-//         Value::Map(map)
-//     );
-// }
+    assert_eval!(
+        r#"
+        {
+            "a b" = "hello";
+            c = {
+                "a b";
+            };
+        }"#,
+        Value::Map(map)
+    );
+}
 
 #[test]
 fn lambda() {
     assert_eval!(
         "
         (
-            add = {l;r}: l + r;
+            add = {l,r}: l + r;
             add {l = 2; r = 3;}
         )",
         Value::Number(5.0.into())
@@ -215,7 +215,7 @@ fn list() {
         Value::String("forsen".into()),
         Value::Number(3.0.into()),
     ];
-    assert_eval!(r#"[1; "forsen"; 3]"#, Value::List(expected));
+    assert_eval!(r#"[1, "forsen", 3]"#, Value::List(expected));
 }
 #[test]
 fn list_empty() {

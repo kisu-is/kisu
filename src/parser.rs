@@ -302,11 +302,15 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn map_and_lambda(&mut self) -> Result<Expr, Error> {
+    // TODO: move away from nix style lambdas
+    // greedily parsing it is ugly as you can see
+    // and disambiguating with the colon requires cloning the token iter
+    fn braced_expr(&mut self) -> Result<Expr, Error> {
         self.expect(TokenKind::BraceL)?;
 
         let mut fields = Vec::new();
-        let mut trailing_token = None;
+        let mut delimeters: Vec<Token> = Vec::new();
+        let mut delimeter: Option<Token> = None;
 
         while self.check_key() {
             let key = self.key()?;
@@ -318,38 +322,64 @@ impl<'a> Parser<'a> {
 
             fields.push(Param { ident: key, expr });
 
-            if self.check(&TokenKind::Semicolon) {
-                self.advance();
+            if self.check(&TokenKind::Semicolon) | self.check(&TokenKind::Comma) {
+                delimeter = Some(self.consume());
+                delimeters.push(delimeter.clone().unwrap());
+            } else if self.check(&TokenKind::BraceR) {
+                delimeter = Some(self.current_token.clone());
+                break;
             } else {
-                trailing_token = Some(self.current_token.clone());
-                if self.check(&TokenKind::BraceR) {
-                    break;
-                } else {
-                    return Err(Error::UnexpectedToken {
-                        expected: TokenKind::Semicolon,
-                        found: self.token_kind().clone(),
-                        span: self.token_span().clone().into(),
-                    });
-                }
+                return Err(Error::UnexpectedToken {
+                    expected: TokenKind::Semicolon,
+                    found: self.token_kind().clone(),
+                    span: self.token_span().clone().into(),
+                });
             }
         }
 
         self.expect(TokenKind::BraceR)?;
+
         if self.check_consume(&TokenKind::Colon).is_some() {
+            for sep_token in &delimeters {
+                if sep_token.kind != TokenKind::Comma {
+                    return Err(Error::UnexpectedToken {
+                        expected: TokenKind::Comma,
+                        found: sep_token.kind.clone(),
+                        span: sep_token.span.clone().into(),
+                    });
+                }
+            }
             let body = self.expr()?;
             Ok(Expr::Lambda {
                 params: fields,
                 body: Box::new(body),
             })
         } else {
-            if let Some(trailing_token) = trailing_token
-                && !fields.is_empty()
-            {
+            if !fields.is_empty() && delimeters.len() < fields.len() {
+                let found_kind = delimeter
+                    .as_ref()
+                    .map(|t| t.kind.clone())
+                    .unwrap_or(TokenKind::Eof);
+                let found_span = delimeter
+                    .as_ref()
+                    .map(|t| t.span.clone())
+                    .unwrap_or(self.token_span().clone());
+
                 return Err(Error::UnexpectedToken {
                     expected: TokenKind::Semicolon,
-                    found: trailing_token.kind,
-                    span: trailing_token.span.into(),
+                    found: found_kind,
+                    span: found_span.into(),
                 });
+            }
+
+            for sep_token in &delimeters {
+                if sep_token.kind != TokenKind::Semicolon {
+                    return Err(Error::UnexpectedToken {
+                        expected: TokenKind::Semicolon,
+                        found: sep_token.kind.clone(),
+                        span: sep_token.span.clone().into(),
+                    });
+                }
             }
             Ok(Expr::Map {
                 bindings: fields
@@ -370,7 +400,7 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::BracketR) {
             let expr = self.expr()?;
             exprs.push(expr);
-            if self.check_consume(&TokenKind::Semicolon).is_none()
+            if self.check_consume(&TokenKind::Comma).is_none()
                 && self.check_next(&TokenKind::BracketR)
             {
                 break;
@@ -388,7 +418,7 @@ impl<'a> Parser<'a> {
             TokenKind::Ident => self.ident(),
             TokenKind::BracketL => self.list(),
             TokenKind::ParenL => self.block(false),
-            TokenKind::BraceL => self.map_and_lambda(),
+            TokenKind::BraceL => self.braced_expr(),
             _ => Err(Error::UnexpectedToken {
                 expected: self.token_kind().clone(),
                 found: self.token_kind().clone(),
