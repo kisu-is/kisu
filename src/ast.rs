@@ -1,6 +1,4 @@
-use std::ops::{Add, Div, Mul, Sub};
-
-use crate::lexer::TokenKind;
+use crate::{lexer::TokenKind, types::Type};
 use logos::Span;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,7 +16,7 @@ pub struct TypeIdent {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
     pub ident: Ident,
-    pub constraint: Option<TypeIdent>,
+    pub constraint: Option<Type>,
     pub expr: Box<Expr>,
     pub span: Span,
 }
@@ -26,7 +24,7 @@ pub struct Binding {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub ident: Ident,
-    pub constraint: Option<TypeIdent>,
+    pub constraint: Option<Type>,
     pub expr: Option<Box<Expr>>,
     pub span: Span,
 }
@@ -34,66 +32,8 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Str(pub String, pub Span);
 
-impl From<&str> for Str {
-    fn from(value: &str) -> Self {
-        Self(value.to_string(), 0..0)
-    }
-}
-
-impl Add for Str {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + &rhs.0, self.1.start..rhs.1.end)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Num(pub f64, pub Span);
-
-impl From<f64> for Num {
-    fn from(value: f64) -> Self {
-        Self(value, 0..0)
-    }
-}
-
-impl PartialOrd for Num {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
-    }
-}
-
-impl Add for Num {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0, self.1.start..rhs.1.end)
-    }
-}
-
-impl Sub for Num {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0, self.1.start..rhs.1.end)
-    }
-}
-
-impl Mul for Num {
-    type Output = Self;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        Self(self.0 * rhs.0, self.1.start..rhs.1.end)
-    }
-}
-
-impl Div for Num {
-    type Output = Self;
-
-    fn div(self, rhs: Self) -> Self::Output {
-        Self(self.0 / rhs.0, self.1.start..rhs.1.end)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct List {
@@ -298,5 +238,5 @@ pub trait Visitor<'ast>: Sized {
         then_expr: &'ast Expr,
         else_expr: &'ast Expr,
     ) -> Result<(), Self::Err>;
-    fn visit_type_ident(&mut self, type_ident: &'ast TypeIdent) -> Result<(), Self::Err>;
+    fn visit_type(&mut self, ty: &'ast Type) -> Result<(), Self::Err>;
 }

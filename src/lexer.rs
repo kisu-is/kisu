@@ -63,10 +63,15 @@ pub enum TokenKind {
     #[token("false")]
     False,
 
+    #[token("fn")]
+    Fn,
+    #[token("->")]
+    Arrow,
+
     #[regex(r#""([^"\\]|\\.)*""#)]
     String,
     #[regex(r"[A-Z][a-zA-Z0-9_]*")]
-    Type,
+    TypeIdent,
     #[regex(r"[a-z_][a-zA-Z0-9_]*")]
     Ident,
     #[regex(r"[0-9]+(\.[0-9]+)?")]

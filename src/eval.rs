@@ -1,4 +1,5 @@
 use crate::ast::{self, BinaryOp, Binding, Expr, Num, Param, Str, UnaryOp, Visitor};
+use crate::types::Type;
 use miette::SourceSpan;
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -540,7 +541,7 @@ impl<'ast> ast::Visitor<'ast> for TreeWalker {
         Ok(())
     }
 
-    fn visit_type_ident(&mut self, _type_ident: &'ast ast::TypeIdent) -> Result<(), Self::Err> {
+    fn visit_type(&mut self, _ty: &'ast Type) -> Result<(), Self::Err> {
         // no runtime type checking
         Ok(())
     }

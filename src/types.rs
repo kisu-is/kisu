@@ -283,18 +283,6 @@ impl TypeChecker {
         }
         free_vars
     }
-
-    fn type_from_ident(&self, type_ident: &TypeIdent) -> Result<Type, Error> {
-        match type_ident.name.as_str() {
-            "Number" => Ok(Type::Number),
-            "String" => Ok(Type::String),
-            "Bool" => Ok(Type::Bool),
-            name => Err(Error::UnknownType {
-                name: name.to_string(),
-                span: type_ident.span.clone().into(),
-            }),
-        }
-    }
 }
 
 impl<'ast> Visitor<'ast> for TypeChecker {
@@ -321,14 +309,9 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         self.subst = checker.subst;
         self.count = checker.count;
 
-        let ty = if let Some(constraint_ident) = &bind.constraint {
-            let constrained_ty = self.type_from_ident(constraint_ident)?;
-            self.unify(
-                &inferred_ty,
-                &constrained_ty,
-                bind.ident.span.clone().into(),
-            )?;
-            constrained_ty
+        let ty = if let Some(constraint_ty) = &bind.constraint {
+            self.unify(&inferred_ty, constraint_ty, bind.ident.span.clone().into())?;
+            constraint_ty.clone()
         } else {
             inferred_ty
         };
@@ -480,13 +463,8 @@ impl<'ast> Visitor<'ast> for TypeChecker {
 
         for param in params {
             let param_type = self.new_var();
-            if let Some(constraint_ident) = &param.constraint {
-                let constrained_ty = self.type_from_ident(constraint_ident)?;
-                self.unify(
-                    &param_type,
-                    &constrained_ty,
-                    param.ident.span.clone().into(),
-                )?;
+            if let Some(constraint_ty) = &param.constraint {
+                self.unify(&param_type, constraint_ty, param.ident.span.clone().into())?;
             }
 
             scope.extend(
@@ -567,9 +545,8 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         Ok(())
     }
 
-    fn visit_type_ident(&mut self, type_ident: &'ast TypeIdent) -> Result<(), Self::Err> {
-        let ty = self.type_from_ident(type_ident)?;
-        self.ty = Some(ty);
+    fn visit_type(&mut self, ty: &'ast Type) -> Result<(), Self::Err> {
+        self.ty = Some(ty.clone());
         Ok(())
     }
 }

@@ -11,7 +11,7 @@ program = type_def* block ;
 type_ident = r/[A-Z][a-zA-Z0-9_]*/ ;
 type_def = "struct" type_ident "=" type_expr ;
 list_type = "[" type_expr "]" ;
-lambda_type = "fn" "(" (key constraint ",")* ")" "->" type_expr ;
+lambda_type = "fn" type_expr* "->" type_expr ;
 
 constraint = ":" type_expr ;
 

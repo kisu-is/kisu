@@ -1,5 +1,6 @@
-use crate::ast::{self, BinaryOp, Binding, Expr, Ident, List, Num, Param, Str, TypeIdent, UnaryOp};
+use crate::ast::{self, BinaryOp, Binding, Expr, Ident, List, Num, Param, Str, UnaryOp};
 use crate::lexer::{Token, TokenIter, TokenKind};
+use crate::types::Type;
 use logos::Span;
 
 pub use _hide_warnings::*;
@@ -212,33 +213,61 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn type_ident(&mut self) -> Result<TypeIdent, Error> {
-        let token = self.expect(TokenKind::Type)?;
+    fn type_ident(&mut self) -> Result<Type, Error> {
+        let token = self.expect(TokenKind::TypeIdent)?;
         let span = token.span.clone();
         let name = &self.source[span.start..span.end];
 
-        Ok(TypeIdent {
-            name: name.to_string(),
-            span,
-        })
+        let ty = match name {
+            "Number" => Some(Type::Number),
+            "String" => Some(Type::String),
+            "Bool" => Some(Type::Bool),
+            _ => {
+                // TODO: custom types
+                None
+            }
+        };
+
+        Ok(ty.unwrap())
     }
 
-    fn list_type(&mut self) -> Result<TypeIdent, Error> {
-        let start = self.expect(TokenKind::BracketL)?.span.start;
-        let ty = self.type_ident()?;
-        let end = self.expect(TokenKind::BracketR)?.span.end;
-        Ok(TypeIdent {
-            name: ty.name,
-            span: start..end,
-        })
+    fn list_type(&mut self) -> Result<Type, Error> {
+        self.expect(TokenKind::BracketL)?;
+        let ty = self.type_expr()?;
+        self.expect(TokenKind::BracketR)?;
+        Ok(Type::List(Box::new(ty)))
     }
 
-    fn type_expr(&mut self) -> Result<TypeIdent, Error> {
+    fn lambda_type(&mut self) -> Result<Type, Error> {
+        self.expect(TokenKind::Fn)?;
+
+        let mut types = vec![];
+        while !self.check(&TokenKind::Arrow) {
+            let param_ty = self.type_expr()?;
+            types.push(param_ty);
+        }
+
+        self.expect(TokenKind::Arrow)?;
+        let ret_ty = self.type_expr()?;
+
+        // desugar multi param lambdas
+        let mut result = Type::Lambda(Box::new(types.pop().unwrap()), Box::new(ret_ty.clone()));
+        for ty in types {
+            if let Type::Lambda(_, rty) = &mut result {
+                **rty = Type::Lambda(Box::new(ty), Box::new(ret_ty.clone()));
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn type_expr(&mut self) -> Result<Type, Error> {
         match self.token_kind() {
-            TokenKind::Type => self.type_ident(),
+            TokenKind::TypeIdent => self.type_ident(),
             TokenKind::BracketL => self.list_type(),
+            TokenKind::Fn => self.lambda_type(),
             _ => Err(Error::UnexpectedToken {
-                expected: TokenKind::Type,
+                expected: TokenKind::TypeIdent,
                 found: self.token_kind().clone(),
                 span: self.token_span().clone().into(),
             }),
@@ -293,7 +322,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn constraint(&mut self) -> Result<Option<TypeIdent>, Error> {
+    fn constraint(&mut self) -> Result<Option<Type>, Error> {
         if self.expect(TokenKind::Colon).is_err() {
             return Ok(None);
         };
