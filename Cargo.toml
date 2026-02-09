@@ -1,3 +1,4 @@
+
 [package]
 name = "kisu"
 version = "0.1.1"
@@ -10,11 +11,20 @@ repository = "https://github.com/vesdev/kisu"
 [dependencies]
 logos = "0.16.0"
 miette = { version = "7.6.0", features = ["fancy"] }
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
 thiserror = "2.0.18"
+
+[features]
+default = []
+serde = ["dep:serde"]
 
 [workspace]
 members = ["cli"]
 
 [dev-dependencies]
 indoc = "2.0.7"
+
+[[test]]
+name = "deserialize"
+path = "tests/deserialize.rs"
+required-features = ["serde"]

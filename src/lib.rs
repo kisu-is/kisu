@@ -2,19 +2,21 @@ use logos::Lexer;
 
 use crate::{
     ast::Visitor,
-    eval::{TreeWalker, Value},
     lexer::TokenIter,
     parser::Parser,
+    target::eval::{self, TreeWalker, Value},
     types::TypeChecker,
 };
 
 pub mod ast;
+#[cfg(feature = "serde")]
 pub mod deserialize;
-pub mod eval;
 pub mod lexer;
 pub mod parser;
+pub mod target;
 pub mod types;
 
+#[cfg(feature = "serde")]
 pub use deserialize::from_str;
 
 /// run kisu program with pretty printed errors
@@ -43,6 +45,7 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Runtime(#[from] eval::Error),
+    #[cfg(feature = "serde")]
     #[error(transparent)]
     #[diagnostic(transparent)]
     Deserialize(#[from] deserialize::Error),

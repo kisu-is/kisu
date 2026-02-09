@@ -1,4 +1,4 @@
-use kisu::{eval::Value, run};
+use kisu::{run, target::eval::Value};
 
 macro_rules! assert_eval {
     ($src:literal, $eq:expr) => {{
