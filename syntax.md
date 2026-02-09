@@ -9,7 +9,12 @@ key = ident | string;
 program = type_def* block ;
 
 type_ident = r/[A-Z][a-zA-Z0-9_]*/ ;
-type_def = "struct" type_ident "=" type_expr ;
+struct_field = ident ":" type_expr ;
+struct_fields = struct_field ("," struct_field)* ;
+struct_body = "{" struct_fields? "}" ;
+struct_expr = type_ident "{" assign* "}" ;
+struct_def = "struct" type_ident struct_body ;
+
 list_type = "[" type_expr "]" ;
 lambda_type = "fn" type_expr* "->" type_expr ;
 
@@ -24,7 +29,7 @@ expr = ident
      | literal
      | lambda
      | block
-     | map
+     | struct_expr
      | list
      | unary
      | binary
@@ -40,7 +45,6 @@ assign = key constraint? "=" expr ";"
        | key constraint? ";" ; // inherit
 
 block = "(" assign* expr ")" ;
-map = "{" assign* "}" ;
 
 list = "[" expr ("," expr)* "]" ;
 

@@ -65,6 +65,8 @@ pub enum TokenKind {
 
     #[token("fn")]
     Fn,
+    #[token("struct")]
+    Struct,
     #[token("->")]
     Arrow,
 

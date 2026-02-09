@@ -60,7 +60,7 @@ impl<'de, 'a> de::Deserializer<'de> for Deserializer<'a> {
         match self.value {
             Value::Number(n) => visitor.visit_f64(n),
             Value::String(s) => visitor.visit_string(s),
-            Value::Map(map) => {
+            Value::Struct(_name, map) => {
                 let map_deserializer = MapDeserializer::new(map);
                 visitor.visit_map(map_deserializer)
             }
@@ -309,7 +309,7 @@ impl<'de, 'a> de::Deserializer<'de> for Deserializer<'a> {
         V: Visitor<'de>,
     {
         match self.value {
-            Value::Map(map) => {
+            Value::Struct(_name, map) => {
                 let map_deserializer = MapDeserializer::new(map);
                 visitor.visit_map(map_deserializer)
             }

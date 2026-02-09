@@ -1,4 +1,6 @@
-use crate::ast::{self, BinaryOp, Binding, Expr, Num, Param, Str, UnaryOp, Visitor};
+use crate::ast::{
+    self, BinaryOp, Binding, Expr, Num, Param, Program, Str, StructDef, TypeIdent, UnaryOp, Visitor,
+};
 use crate::types::Type;
 use miette::SourceSpan;
 use std::cell::OnceCell;
@@ -41,7 +43,7 @@ pub enum Value {
     Number(f64),
     String(String),
     Bool(bool),
-    Map(HashMap<String, Value>),
+    Struct(String, HashMap<String, Value>),
     List(Vec<Value>),
     Lambda {
         params: Vec<String>,
@@ -57,7 +59,7 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Number(l), Value::Number(r)) => l == r,
             (Value::String(l), Value::String(r)) => l == r,
-            (Value::Map(l), Value::Map(r)) => l == r,
+            (Value::Struct(n1, f1), Value::Struct(n2, f2)) => n1 == n2 && f1 == f2,
             (Value::List(l), Value::List(r)) => l == r,
             (
                 Value::Lambda {
@@ -86,8 +88,8 @@ pub enum Error {
     IdentifierNotFound(String, #[label] SourceSpan),
     #[error("stack underflow")]
     StackUnderflow,
-    #[error("tried accessing a map with invalid parameters")]
-    InvalidMapAccess(#[label] SourceSpan),
+    #[error("tried accessing a struct with invalid field")]
+    InvalidStructAccess(#[label] SourceSpan),
 }
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -171,12 +173,12 @@ impl TreeWalker {
                 }
                 Ok(Value::List(list))
             }
-            Value::Map(value) => {
+            Value::Struct(name, value) => {
                 let mut map = HashMap::with_capacity(value.len());
                 for (key, val) in value {
                     map.insert(key, self.force_consume(val)?);
                 }
-                Ok(Value::Map(map))
+                Ok(Value::Struct(name, map))
             }
             _ => Ok(value),
         }
@@ -223,6 +225,13 @@ impl TreeWalker {
 
 impl<'ast> ast::Visitor<'ast> for TreeWalker {
     type Err = Error;
+
+    fn visit_program(&mut self, program: &'ast Program) -> Result<(), Self::Err> {
+        for s in &program.structs {
+            self.visit_struct_def(s)?;
+        }
+        self.visit_expr(&program.expr)
+    }
 
     fn visit_ident(&mut self, ident: &'ast ast::Ident) -> Result<(), Self::Err> {
         let val = self.closure_mut()?.scope_get(&ident.name)?.clone();
@@ -363,18 +372,26 @@ impl<'ast> ast::Visitor<'ast> for TreeWalker {
         Ok(())
     }
 
-    fn visit_map(&mut self, bindings: &'ast [Binding]) -> Result<(), Self::Err> {
-        let mut map = HashMap::new();
+    fn visit_struct_expr(
+        &mut self,
+        ty_name: &'ast TypeIdent,
+        fields: &'ast [Binding],
+    ) -> Result<(), Self::Err> {
         self.closure_mut()?.scope_push();
 
-        for binding in bindings {
-            self.visit_bind(binding)?;
-            let value = self.closure()?.scope_get(&binding.ident.name)?.clone();
-            let forced_value = self.force(value)?;
-            map.insert(binding.ident.name.clone(), forced_value);
+        for bind in fields {
+            self.visit_bind(bind)?;
         }
-        self.closure_mut()?.scope_pop()?;
-        self.stack_push(Value::Map(map));
+
+        let mut fields_map = HashMap::new();
+        for bind in fields {
+            let val = self.closure()?.scope_get(&bind.ident.name)?.clone();
+            let forced_val = self.force(val)?;
+            fields_map.insert(bind.ident.name.clone(), forced_val);
+        }
+
+        self.closure_mut()?.scope_pop()?; // Pop the scope
+        self.stack_push(Value::Struct(ty_name.name.clone(), fields_map));
         Ok(())
     }
 
@@ -489,7 +506,7 @@ impl<'ast> ast::Visitor<'ast> for TreeWalker {
         Ok(())
     }
 
-    fn visit_map_access(
+    fn visit_struct_access(
         &mut self,
         expr: &'ast Expr,
         ident: &'ast ast::Ident,
@@ -498,14 +515,13 @@ impl<'ast> ast::Visitor<'ast> for TreeWalker {
         let val = self.stack_pop()?;
         let forced_val = self.force(val)?;
         let result = match forced_val {
-            Value::Map(map) => map
+            Value::Struct(_, map) => map
                 .get(&ident.name)
                 .cloned()
-                .ok_or(Error::IdentifierNotFound(
-                    ident.name.clone(),
-                    ident.span.clone().into(),
-                )),
-            _ => Err(Error::InvalidMapAccess(expr.span().into())),
+                .ok_or(Error::InvalidStructAccess(ident.span.clone().into())),
+            _ => {
+                unreachable!()
+            }
         }?;
 
         self.stack_push(result);
@@ -543,6 +559,10 @@ impl<'ast> ast::Visitor<'ast> for TreeWalker {
 
     fn visit_type(&mut self, _ty: &'ast Type) -> Result<(), Self::Err> {
         // no runtime type checking
+        Ok(())
+    }
+
+    fn visit_struct_def(&mut self, _struct_def: &'ast StructDef) -> Result<(), Self::Err> {
         Ok(())
     }
 }

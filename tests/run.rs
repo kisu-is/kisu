@@ -81,7 +81,7 @@ fn block_top_level() {
 }
 
 #[test]
-fn map() {
+fn structs() {
     use std::collections::HashMap;
     let mut expected = HashMap::new();
     expected.insert("a".to_string(), Value::Number(10.0));
@@ -89,20 +89,22 @@ fn map() {
 
     assert_eval!(
         "
-        {
+        struct Test { a: Number; b: Number; }
+        Test {
             a = 10;
             b = 20;
         }",
-        Value::Map(expected)
+        Value::Struct("Test".to_string(), expected)
     );
 }
 
 #[test]
-fn map_access() {
+fn struct_access() {
     assert_eval!(
         "
+        struct Test { a: Number; }
         (
-            map = { a = 5; };
+            map = Test { a = 5; };
             map.a
         )",
         Value::Number(5.0)
@@ -110,7 +112,7 @@ fn map_access() {
 }
 
 #[test]
-fn map_string_key() {
+fn struct_string_key() {
     use std::collections::HashMap;
     let mut expected = HashMap::new();
     expected.insert("a".to_string(), Value::Number(10.0));
@@ -118,11 +120,12 @@ fn map_string_key() {
 
     assert_eval!(
         r#"
-        {
+        struct Test { "a": Number; "b": Number; }
+        Test {
             "a" = 10;
             "b" = 20;
         }"#,
-        Value::Map(expected)
+        Value::Struct("Test".to_string(), expected)
     );
 }
 
@@ -135,12 +138,13 @@ fn inherit() {
 
     assert_eval!(
         r#"
+        struct Test { x: String; y: Number; }
         y = 10;
-        {
+        Test {
             x = "hello";
             y;
         }"#,
-        Value::Map(map)
+        Value::Struct("Test".to_string(), map)
     );
 }
 
@@ -148,20 +152,24 @@ fn inherit() {
 fn inherit_string_key() {
     use std::collections::HashMap;
     let mut map = HashMap::new();
-    map.insert("a b".to_string(), Value::String("hello".to_string()));
     let mut map2 = HashMap::new();
     map2.insert("a b".to_string(), Value::String("hello".to_string()));
-    map.insert("c".to_string(), Value::Map(map2));
+    map.insert("a b".to_string(), Value::String("hello".to_string()));
+    map.insert("c".to_string(), Value::Struct("Inner".to_string(), map2));
 
     assert_eval!(
         r#"
-        {
-            "a b" = "hello";
-            c = {
+        struct Outer { "a b": String; c: Inner; }
+        struct Inner { "a b": String; }
+
+        "a b" = "hello";
+        Outer {
+            "a b";
+            c = Inner {
                 "a b";
             };
         }"#,
-        Value::Map(map)
+        Value::Struct("Outer".to_string(), map)
     );
 }
 

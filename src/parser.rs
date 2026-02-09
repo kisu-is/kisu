@@ -82,6 +82,16 @@ impl<'a> Parser<'a> {
         parser
     }
 
+    pub fn parse(&mut self) -> Result<ast::Program, Error> {
+        let mut structs = Vec::new();
+        while self.check(&TokenKind::Struct) {
+            structs.push(self.struct_def()?);
+        }
+        let expr = self.block(true)?;
+        self.expect_eof()?;
+        Ok(ast::Program { structs, expr })
+    }
+
     #[inline]
     fn advance(&mut self) {
         std::mem::swap(&mut self.next_token, &mut self.current_token);
@@ -218,17 +228,15 @@ impl<'a> Parser<'a> {
         let span = token.span.clone();
         let name = &self.source[span.start..span.end];
 
-        let ty = match name {
-            "Number" => Some(Type::Number),
-            "String" => Some(Type::String),
-            "Bool" => Some(Type::Bool),
-            _ => {
-                // TODO: custom types
-                None
-            }
-        };
-
-        Ok(ty.unwrap())
+        Ok(match name {
+            "Number" => Type::Number,
+            "String" => Type::String,
+            "Bool" => Type::Bool,
+            _ => Type::Struct(ast::TypeIdent {
+                name: name.to_string(),
+                span,
+            }),
+        })
     }
 
     fn list_type(&mut self) -> Result<Type, Error> {
@@ -383,19 +391,11 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn map(&mut self) -> Result<Expr, Error> {
-        let start = self.expect(TokenKind::BraceL)?.span.end;
+    fn struct_expr(&mut self, type_name: ast::TypeIdent) -> Result<Expr, Error> {
+        let start = self.expect(TokenKind::BraceL)?.span.start;
+        let mut fields = Vec::new();
 
-        let mut bindings = Vec::new();
-
-        if self.check(&TokenKind::BraceR) {
-            return Ok(Expr::Map {
-                bindings,
-                span: start..self.consume().span.end,
-            });
-        }
-
-        loop {
+        while !self.check(&TokenKind::BraceR) {
             let key = self.key()?;
             let constraint = self.constraint()?;
 
@@ -405,25 +405,31 @@ impl<'a> Parser<'a> {
                 Expr::Ident(key.clone())
             };
 
-            bindings.push(Binding {
+            fields.push(ast::Binding {
                 span: key.span.start..expr.span().end,
                 constraint,
                 ident: key,
                 expr: Box::new(expr),
             });
 
-            if self.check_consume(&TokenKind::Semicolon).is_some() {
-                if self.check(&TokenKind::BraceR) {
-                    break;
-                }
-            } else {
-                break;
+            if self.check_consume(&TokenKind::Semicolon).is_none()
+                && !self.check(&TokenKind::BraceR)
+            {
+                return Err(Error::UnexpectedToken {
+                    expected: TokenKind::Semicolon,
+                    found: self.token_kind().clone(),
+                    span: self.token_span().clone().into(),
+                });
             }
         }
 
-        let span = start..self.expect(TokenKind::BraceR)?.span.end;
+        let end = self.expect(TokenKind::BraceR)?.span.end;
 
-        Ok(Expr::Map { bindings, span })
+        Ok(Expr::Struct {
+            type_name,
+            fields,
+            span: start..end,
+        })
     }
 
     fn lambda(&mut self) -> Result<Expr, Error> {
@@ -481,6 +487,16 @@ impl<'a> Parser<'a> {
     }
 
     fn atom(&mut self) -> Result<Expr, Error> {
+        if self.check(&TokenKind::TypeIdent) && self.check_next(&TokenKind::BraceL) {
+            let type_ident_token = self.expect(TokenKind::TypeIdent)?;
+            let type_name = ast::TypeIdent {
+                name: self.source[type_ident_token.span.start..type_ident_token.span.end]
+                    .to_string(),
+                span: type_ident_token.span,
+            };
+            return self.struct_expr(type_name);
+        }
+
         let expr_result = match self.token_kind() {
             TokenKind::Number => self.number(),
             TokenKind::String => self.string(),
@@ -495,7 +511,6 @@ impl<'a> Parser<'a> {
             TokenKind::Ident => self.ident(),
             TokenKind::BracketL => self.list(),
             TokenKind::ParenL => self.block(false),
-            TokenKind::BraceL => self.map(),
             TokenKind::Pipe => self.lambda(),
             _ => Err(Error::UnexpectedToken {
                 expected: self.token_kind().clone(),
@@ -517,9 +532,8 @@ impl<'a> Parser<'a> {
                 | TokenKind::False
                 | TokenKind::BracketL
                 | TokenKind::ParenL
-                | TokenKind::BraceL
                 | TokenKind::Pipe
-        )
+        ) || (self.check(&TokenKind::TypeIdent) && self.check_next(&TokenKind::BraceL))
     }
 
     pub fn expr(&mut self) -> Result<Expr, Error> {
@@ -552,7 +566,7 @@ impl<'a> Parser<'a> {
                 self.consume();
                 if op == BinaryOp::Dot {
                     let key = self.key()?;
-                    lhs = Expr::MapAccess {
+                    lhs = Expr::StructAccess {
                         span: lhs.span().start..key.span.end,
                         expr: Box::new(lhs),
                         ident: key,
@@ -598,9 +612,43 @@ impl<'a> Parser<'a> {
         self.atom()
     }
 
-    pub fn parse(&mut self) -> Result<Expr, Error> {
-        let expr = self.block(true)?;
-        self.expect_eof()?;
-        Ok(expr)
+    fn struct_def(&mut self) -> Result<ast::StructDef, Error> {
+        let start_span = self.expect(TokenKind::Struct)?.span;
+        let name_token = self.expect(TokenKind::TypeIdent)?;
+        let name_ident = ast::TypeIdent {
+            name: self.source[name_token.span.start..name_token.span.end].to_string(),
+            span: name_token.span,
+        };
+
+        self.expect(TokenKind::BraceL)?;
+
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::BraceR) {
+            fields.push(self.struct_field()?);
+            if self.check_consume(&TokenKind::Semicolon).is_none()
+                && !self.check(&TokenKind::BraceR)
+            {
+                return Err(Error::UnexpectedToken {
+                    expected: TokenKind::Semicolon,
+                    found: self.token_kind().clone(),
+                    span: self.token_span().clone().into(),
+                });
+            }
+        }
+        let end_span = self.expect(TokenKind::BraceR)?.span;
+
+        Ok(ast::StructDef {
+            name: name_ident,
+            fields,
+            span: start_span.start..end_span.end,
+        })
+    }
+
+    fn struct_field(&mut self) -> Result<ast::StructField, Error> {
+        let ident = self.key()?;
+        self.expect(TokenKind::Colon)?;
+        let ty = self.type_expr()?;
+        let span = ident.span.clone();
+        Ok(ast::StructField { ident, ty, span })
     }
 }

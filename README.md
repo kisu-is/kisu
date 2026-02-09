@@ -14,16 +14,25 @@ Lazy purely functional configuration language
 
 Current syntax example:
 ```haskell
-mk_dep = |name, version|: {
+struct Dependency {
+  name: String;
+  version: String;
+}
+
+struct Package {
+  name: String;
+  edition: String;
+  dependencies: [Dependency];
+}
+
+mk_dep = |name, version|: Dependency {
   name;
   version;
 };
 
-{
-  package = {
-    name = "kisu";
-    edition = "2024";
-  };
+Package {
+  name = "kisu";
+  edition = "2024";
 
   dependencies = [
     mk_dep "logos" "*",

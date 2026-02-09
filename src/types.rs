@@ -1,4 +1,7 @@
-use crate::ast::*;
+use crate::ast::{
+    self, BinaryOp, Binding, Expr, Ident, List, Num, Param, Program, Str, StructDef, TypeIdent,
+    UnaryOp, Visitor,
+};
 use miette::SourceSpan;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -8,7 +11,7 @@ pub enum Type {
     Var(u32),
     Lambda(Box<Type>, Box<Type>),
     List(Box<Type>),
-    Map(HashMap<String, Type>),
+    Struct(ast::TypeIdent),
     Number,
     String,
     Bool,
@@ -20,13 +23,7 @@ impl fmt::Display for Type {
             Type::Var(n) => write!(f, "t{}", n),
             Type::Lambda(arg, ret) => write!(f, "(fn {} -> {})", arg, ret),
             Type::List(t) => write!(f, "[{}]", t),
-            Type::Map(fields) => {
-                let mut s = String::new();
-                for (name, ty) in fields {
-                    s.push_str(&format!("{}: {}, ", name, ty));
-                }
-                write!(f, "{{{}}}", s.trim_end_matches(", "))
-            }
+            Type::Struct(ident) => write!(f, "{}", ident.name),
             Type::Number => write!(f, "Number"),
             Type::String => write!(f, "String"),
             Type::Bool => write!(f, "Bool"),
@@ -67,6 +64,12 @@ mod _hide_warnings {
             #[label]
             span: SourceSpan,
         },
+        #[error("Duplicate struct definition: {name}")]
+        DuplicateDef {
+            name: String,
+            #[label]
+            span: SourceSpan,
+        },
     }
 }
 
@@ -76,19 +79,27 @@ pub struct TypeChecker {
     count: u32,
     scope: Scope,
     ty: Option<Type>,
+    struct_defs: HashMap<String, StructDef>,
 }
 
 impl TypeChecker {
-    fn new(subst: HashMap<u32, Type>, count: u32, scope: Scope, ty: Option<Type>) -> Self {
+    fn new(
+        subst: HashMap<u32, Type>,
+        count: u32,
+        scope: Scope,
+        ty: Option<Type>,
+        struct_defs: HashMap<String, StructDef>,
+    ) -> Self {
         Self {
             subst,
             count,
             scope,
             ty,
+            struct_defs,
         }
     }
-    pub fn check(&mut self, expr: &Expr) -> Result<Type, Error> {
-        self.visit_expr(expr)?;
+    pub fn check(&mut self, program: &Program) -> Result<Type, Error> {
+        self.visit_program(program)?;
         Ok(self.ty.take().unwrap())
     }
 
@@ -111,13 +122,7 @@ impl TypeChecker {
                 Type::Lambda(Box::new(self.apply(arg)), Box::new(self.apply(ret)))
             }
             Type::List(t) => Type::List(Box::new(self.apply(t))),
-            Type::Map(fields) => {
-                let mut new_fields = HashMap::new();
-                for (name, ty) in fields {
-                    new_fields.insert(name.clone(), self.apply(ty));
-                }
-                Type::Map(new_fields)
-            }
+            Type::Struct(ident) => Type::Struct(ident.clone()),
             _ => ty.clone(),
         }
     }
@@ -148,15 +153,8 @@ impl TypeChecker {
                 self.unify(t1, t2, span)?;
                 Ok(())
             }
-            (Type::Map(f1), Type::Map(f2)) => {
-                let mut f1 = f1.clone();
-                let f2 = f2.clone();
-                for (name, ty) in f2 {
-                    if let Some(other_ty) = f1.remove(&name) {
-                        self.unify(&ty, &other_ty, span)?;
-                    }
-                }
-                if f1.is_empty() {
+            (Type::Struct(ident1), Type::Struct(ident2)) => {
+                if ident1.name == ident2.name {
                     Ok(())
                 } else {
                     Err(Error::UnexpectedType {
@@ -198,7 +196,7 @@ impl TypeChecker {
             }
             Type::Lambda(arg, ret) => self.occurs(id, arg) || self.occurs(id, ret),
             Type::List(t) => self.occurs(id, t),
-            Type::Map(fields) => fields.values().any(|t| self.occurs(id, t)),
+            Type::Struct(_) => false,
             _ => false,
         }
     }
@@ -237,13 +235,7 @@ impl TypeChecker {
                 Box::new(self.apply_scheme(subst, ret)),
             ),
             Type::List(t) => Type::List(Box::new(self.apply_scheme(subst, t))),
-            Type::Map(fields) => {
-                let mut new_fields = HashMap::new();
-                for (name, ty) in fields {
-                    new_fields.insert(name.clone(), self.apply_scheme(subst, ty));
-                }
-                Type::Map(new_fields)
-            }
+            Type::Struct(ident) => Type::Struct(ident.clone()),
             _ => ty.clone(),
         }
     }
@@ -262,11 +254,7 @@ impl TypeChecker {
             Type::List(t) => {
                 free_vars.extend(self.ftv(t));
             }
-            Type::Map(fields) => {
-                for ty in fields.values() {
-                    free_vars.extend(self.ftv(ty));
-                }
-            }
+            Type::Struct(_) => (),
             _ => (),
         }
         free_vars
@@ -288,6 +276,13 @@ impl TypeChecker {
 impl<'ast> Visitor<'ast> for TypeChecker {
     type Err = Error;
 
+    fn visit_program(&mut self, program: &'ast Program) -> Result<(), Self::Err> {
+        for s in &program.structs {
+            self.visit_struct_def(s)?;
+        }
+        self.visit_expr(&program.expr)
+    }
+
     fn visit_ident(&mut self, ident: &'ast Ident) -> Result<(), Self::Err> {
         if let Some(scheme) = self.scope.get(&ident.name).cloned() {
             self.ty = Some(self.instantiate(&scheme));
@@ -301,8 +296,13 @@ impl<'ast> Visitor<'ast> for TypeChecker {
     }
 
     fn visit_bind(&mut self, bind: &'ast Binding) -> Result<(), Self::Err> {
-        let mut checker =
-            TypeChecker::new(self.subst.clone(), self.count, self.scope.clone(), None);
+        let mut checker = TypeChecker::new(
+            self.subst.clone(),
+            self.count,
+            self.scope.clone(),
+            None,
+            self.struct_defs.clone(),
+        );
 
         checker.visit_expr(&bind.expr)?;
         let inferred_ty = checker.ty.take().unwrap();
@@ -400,22 +400,74 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         Ok(())
     }
 
-    fn visit_map(&mut self, bindings: &'ast [Binding]) -> Result<(), Self::Err> {
-        let mut fields = HashMap::new();
-        let mut scope = self.scope.clone();
+    fn visit_struct_expr(
+        &mut self,
+        type_name: &'ast TypeIdent,
+        fields: &'ast [Binding],
+    ) -> Result<(), Self::Err> {
+        let struct_span: SourceSpan = type_name.span.clone().into();
+        let struct_def =
+            self.struct_defs
+                .get(&type_name.name)
+                .ok_or_else(|| Error::UnknownType {
+                    name: type_name.name.clone(),
+                    span: struct_span,
+                })?;
 
-        for bind in bindings {
-            let mut checker = TypeChecker::new(self.subst.clone(), self.count, scope.clone(), None);
+        let mut expr_fields: HashMap<String, Type> = struct_def
+            .fields
+            .iter()
+            .map(|f| (f.ident.name.clone(), f.ty.clone()))
+            .collect();
 
+        let mut actual_fields = HashMap::new();
+
+        for bind in fields {
+            let mut checker = TypeChecker::new(
+                self.subst.clone(),
+                self.count,
+                self.scope.clone(),
+                None,
+                self.struct_defs.clone(),
+            );
             checker.visit_bind(bind)?;
             self.subst = checker.subst;
             self.count = checker.count;
-            scope = checker.scope;
 
-            let ty = self.instantiate(scope.get(&bind.ident.name).unwrap());
-            fields.insert(bind.ident.name.clone(), ty);
+            let inf_ty = checker.ty.take().unwrap();
+
+            if let Some(expr_ty) = expr_fields.remove(&bind.ident.name) {
+                self.unify(&inf_ty, &expr_ty, bind.ident.span.clone().into())?;
+                actual_fields.insert(bind.ident.name.clone(), inf_ty);
+            } else {
+                return Err(Error::UndefinedIdent {
+                    name: bind.ident.name.clone(),
+                    span: bind.ident.span.clone().into(),
+                });
+            }
         }
-        self.ty = Some(Type::Map(fields));
+
+        if !expr_fields.is_empty() {
+            return Err(Error::UnexpectedType {
+                t1: "Missing fields".to_string(),
+                t2: format!("Expected: {:?}", expr_fields.keys()),
+                span: struct_span,
+            });
+        }
+
+        self.ty = Some(Type::Struct(type_name.clone()));
+        Ok(())
+    }
+
+    fn visit_struct_def(&mut self, struct_def: &'ast StructDef) -> Result<(), Self::Err> {
+        let name = struct_def.name.name.clone();
+        if self.struct_defs.contains_key(&name) {
+            return Err(Error::DuplicateDef {
+                name,
+                span: struct_def.span.clone().into(),
+            });
+        }
+        self.struct_defs.insert(name, struct_def.clone());
         Ok(())
     }
 
@@ -426,14 +478,26 @@ impl<'ast> Visitor<'ast> for TypeChecker {
     ) -> Result<(), Self::Err> {
         let mut scope = self.scope.clone();
         for bind in bindings {
-            let mut checker = TypeChecker::new(self.subst.clone(), self.count, scope.clone(), None);
+            let mut checker = TypeChecker::new(
+                self.subst.clone(),
+                self.count,
+                scope.clone(),
+                None,
+                self.struct_defs.clone(),
+            );
             checker.visit_bind(bind)?;
             self.subst = checker.subst;
             self.count = checker.count;
             scope = checker.scope;
         }
 
-        let mut checker = TypeChecker::new(self.subst.clone(), self.count, scope.clone(), None);
+        let mut checker = TypeChecker::new(
+            self.subst.clone(),
+            self.count,
+            scope.clone(),
+            None,
+            self.struct_defs.clone(),
+        );
 
         checker.visit_expr(expr)?;
         let ty = checker.ty.take().unwrap();
@@ -482,6 +546,7 @@ impl<'ast> Visitor<'ast> for TypeChecker {
             count: self.count,
             scope,
             ty: None,
+            struct_defs: self.struct_defs.clone(),
         };
 
         typer.visit_expr(body)?;
@@ -511,17 +576,41 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         Ok(())
     }
 
-    fn visit_map_access(&mut self, expr: &'ast Expr, ident: &'ast Ident) -> Result<(), Self::Err> {
+    fn visit_struct_access(
+        &mut self,
+        expr: &'ast Expr,
+        ident: &'ast Ident,
+    ) -> Result<(), Self::Err> {
         self.visit_expr(expr)?;
         let ty = self.ty.take().unwrap();
 
-        let mut fields = HashMap::new();
-        let new_var = self.new_var();
-        fields.insert(ident.name.clone(), new_var.clone());
+        let inferred_field_ty = if let Type::Struct(struct_type_ident) = self.apply(&ty) {
+            let struct_def_span: SourceSpan = struct_type_ident.span.clone().into();
+            let struct_def = self
+                .struct_defs
+                .get(&struct_type_ident.name)
+                .ok_or_else(|| Error::UnknownType {
+                    name: struct_type_ident.name.clone(),
+                    span: struct_def_span,
+                })?;
+            struct_def
+                .fields
+                .iter()
+                .find(|f| f.ident.name == ident.name)
+                .map(|f| f.ty.clone())
+                .ok_or_else(|| Error::UndefinedIdent {
+                    name: ident.name.clone(),
+                    span: ident.span.clone().into(),
+                })?
+        } else {
+            return Err(Error::UnexpectedType {
+                t1: format!("Expected struct type, found {}", ty),
+                t2: "Struct".to_string(),
+                span: expr.span().into(),
+            });
+        };
 
-        let expected_ty = Type::Map(fields);
-        self.unify(&ty, &expected_ty, expr.span().into())?;
-        self.ty = Some(new_var);
+        self.ty = Some(inferred_field_ty);
         Ok(())
     }
 

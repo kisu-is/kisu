@@ -1,11 +1,12 @@
 #[test]
-fn map() {
+fn structs() {
     #[derive(serde::Deserialize, Debug, PartialEq)]
     struct Config {
         name: String,
     }
 
-    let config: Config = kisu::from_str(r#"{ name = "Joe"; }"#).unwrap();
+    let config: Config =
+        kisu::from_str(r#"struct Config { name: String; } Config { name = "Joe"; }"#).unwrap();
 
     assert_eq!(
         config,
@@ -16,7 +17,7 @@ fn map() {
 }
 
 #[test]
-fn map_nested() {
+fn struct_nested() {
     #[derive(serde::Deserialize, Debug, PartialEq)]
     struct Config {
         user: User,
@@ -29,8 +30,10 @@ fn map_nested() {
 
     let config: Config = kisu::from_str(
         r#"
-        {
-            user = { name = "Joe"; };
+        struct User { name: String; }
+        struct Config { user: User; }
+        Config {
+            user = User { name = "Joe"; };
         }
         "#,
     )
@@ -67,7 +70,10 @@ fn list() {
         features: Vec<String>,
     }
 
-    let config: Config = kisu::from_str(r#"{ features = [ "derive" ]; }"#).unwrap();
+    let config: Config = kisu::from_str(
+        r#"struct Config { features: [String]; } Config { features = [ "derive" ]; }"#,
+    )
+    .unwrap();
 
     assert_eq!(
         config,

@@ -27,11 +27,11 @@ pub fn run(source: &str) -> Result<Value, miette::Error> {
 pub fn eval(source: &str) -> Result<Value, Error> {
     let lexer = Lexer::new(source);
     let mut parser = Parser::new(TokenIter::from(lexer), source);
-    let expr = parser.parse()?;
+    let program = parser.parse()?;
     let mut checker = TypeChecker::default();
-    checker.check(&expr)?;
+    checker.check(&program)?;
     let mut walker = TreeWalker::default();
-    walker.visit_expr(&expr)?;
+    walker.visit_program(&program)?;
     Ok(walker.consume()?)
 }
 

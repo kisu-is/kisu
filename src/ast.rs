@@ -7,7 +7,7 @@ pub struct Ident {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeIdent {
     pub name: String,
     pub span: Span,
@@ -27,6 +27,26 @@ pub struct Param {
     pub constraint: Option<Type>,
     pub expr: Option<Box<Expr>>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub ident: Ident,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructDef {
+    pub name: TypeIdent,
+    pub fields: Vec<StructField>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program {
+    pub structs: Vec<StructDef>,
+    pub expr: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,7 +80,7 @@ pub enum Expr {
         rhs: Box<Expr>,
         span: Span,
     },
-    MapAccess {
+    StructAccess {
         expr: Box<Expr>,
         ident: Ident,
         span: Span,
@@ -75,8 +95,9 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
-    Map {
-        bindings: Vec<Binding>,
+    Struct {
+        type_name: TypeIdent,
+        fields: Vec<Binding>,
         span: Span,
     },
     App {
@@ -102,10 +123,10 @@ impl Expr {
             Expr::Ident(ident) => ident.span.clone(),
             Expr::Unary { span, .. } => span.clone(),
             Expr::Binary { span, .. } => span.clone(),
-            Expr::MapAccess { span, .. } => span.clone(),
+            Expr::StructAccess { span, .. } => span.clone(),
             Expr::Lambda { span, .. } => span.clone(),
             Expr::Block { span, .. } => span.clone(),
-            Expr::Map { span, .. } => span.clone(),
+            Expr::Struct { span, .. } => span.clone(),
             Expr::App { span, .. } => span.clone(),
             Expr::IfExpr { span, .. } => span.clone(),
             Expr::TypeIdent(TypeIdent { span, .. }) => span.clone(),
@@ -169,6 +190,13 @@ impl BinaryOp {
 pub trait Visitor<'ast>: Sized {
     type Err;
 
+    fn visit_program(&mut self, program: &'ast Program) -> Result<(), Self::Err> {
+        for s in &program.structs {
+            self.visit_struct_def(s)?;
+        }
+        self.visit_expr(&program.expr)
+    }
+
     fn visit_expr(&mut self, expr: &'ast Expr) -> Result<(), Self::Err> {
         match expr {
             Expr::Number(n) => self.visit_num(n),
@@ -191,15 +219,19 @@ pub trait Visitor<'ast>: Sized {
                 expr,
                 span: _,
             } => self.visit_block_expr(bindings, expr),
-            Expr::Map { bindings, span: _ } => self.visit_map(bindings),
+            Expr::Struct {
+                type_name,
+                fields,
+                span: _,
+            } => self.visit_struct_expr(type_name, fields),
             Expr::App { lhs, rhs, span: _ } => self.visit_app(lhs, rhs),
             Expr::Ident(ident) => self.visit_ident(ident),
             Expr::List(list) => self.visit_list(list),
-            Expr::MapAccess {
+            Expr::StructAccess {
                 expr,
                 ident,
                 span: _,
-            } => self.visit_map_access(expr, ident),
+            } => self.visit_struct_access(expr, ident),
             Expr::IfExpr {
                 cond,
                 then_expr,
@@ -222,7 +254,12 @@ pub trait Visitor<'ast>: Sized {
         lhs: &'ast Expr,
         rhs: &'ast Expr,
     ) -> Result<(), Self::Err>;
-    fn visit_map(&mut self, bindings: &'ast [Binding]) -> Result<(), Self::Err>;
+    fn visit_struct_expr(
+        &mut self,
+        type_name: &'ast TypeIdent,
+        fields: &'ast [Binding],
+    ) -> Result<(), Self::Err>;
+    fn visit_struct_def(&mut self, struct_def: &'ast StructDef) -> Result<(), Self::Err>;
     fn visit_block_expr(
         &mut self,
         bindings: &'ast [Binding],
@@ -231,7 +268,11 @@ pub trait Visitor<'ast>: Sized {
     fn visit_app(&mut self, lhs: &'ast Expr, rhs: &'ast Expr) -> Result<(), Self::Err>;
     fn visit_lambda(&mut self, params: &'ast [Param], body: &'ast Expr) -> Result<(), Self::Err>;
     fn visit_list(&mut self, list: &'ast List) -> Result<(), Self::Err>;
-    fn visit_map_access(&mut self, expr: &'ast Expr, ident: &'ast Ident) -> Result<(), Self::Err>;
+    fn visit_struct_access(
+        &mut self,
+        expr: &'ast Expr,
+        ident: &'ast Ident,
+    ) -> Result<(), Self::Err>;
     fn visit_if_expr(
         &mut self,
         cond: &'ast Expr,
