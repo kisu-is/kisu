@@ -295,7 +295,7 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         }
     }
 
-    fn visit_bind(&mut self, bind: &'ast Binding) -> Result<(), Self::Err> {
+    fn visit_bind(&mut self, bind: &'ast ast::Binding) -> Result<(), Self::Err> {
         let mut checker = TypeChecker::new(
             self.subst.clone(),
             self.count,
@@ -303,6 +303,35 @@ impl<'ast> Visitor<'ast> for TypeChecker {
             None,
             self.struct_defs.clone(),
         );
+
+        if bind.kind == ast::BindingKind::Rec {
+            let rec_var = checker.new_var();
+            let rec_scheme = Scheme {
+                vars: vec![],
+                ty: rec_var.clone(),
+            };
+            checker.scope.extend(bind.ident.name.clone(), rec_scheme);
+
+            checker.visit_expr(&bind.expr)?;
+            let inferred_ty = checker.ty.take().unwrap();
+            checker.unify(&rec_var, &inferred_ty, bind.ident.span.clone().into())?;
+            let ty = checker.apply(&rec_var);
+
+            self.subst = checker.subst;
+            self.count = checker.count;
+
+            let ty = if let Some(constraint_ty) = &bind.constraint {
+                self.unify(&ty, constraint_ty, bind.ident.span.clone().into())?;
+                constraint_ty.clone()
+            } else {
+                ty
+            };
+
+            let scheme = self.generalize(&self.scope, &ty);
+            self.scope.extend(bind.ident.name.clone(), scheme);
+            self.ty = Some(ty);
+            return Ok(());
+        }
 
         checker.visit_expr(&bind.expr)?;
         let inferred_ty = checker.ty.take().unwrap();

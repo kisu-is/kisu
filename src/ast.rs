@@ -15,10 +15,29 @@ pub struct TypeIdent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
+    pub kind: BindingKind,
     pub ident: Ident,
     pub constraint: Option<Type>,
     pub expr: Box<Expr>,
     pub span: Span,
+}
+
+impl Binding {
+    pub fn new(ident: Ident, constraint: Option<Type>, expr: Box<Expr>, span: Span) -> Self {
+        Self {
+            kind: BindingKind::Normal,
+            ident,
+            constraint,
+            expr,
+            span,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BindingKind {
+    Normal,
+    Rec,
 }
 
 #[derive(Debug, Clone, PartialEq)]

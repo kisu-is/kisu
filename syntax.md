@@ -44,7 +44,7 @@ lambda = "|" (lambda_param ("," lambda_param)*)? "|" ":" expr ;
 assign = key constraint? "=" expr ";"
        | key constraint? ";" ; // inherit
 
-block = "(" assign* expr ")" ;
+block = "(" ("rec"? assign)* expr ")" ;
 
 list = "[" expr ("," expr)* "]" ;
 

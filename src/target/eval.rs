@@ -5,6 +5,7 @@ use crate::types::Type;
 use miette::SourceSpan;
 use rpds::HashTrieMap;
 use std::cell::OnceCell;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -53,6 +54,7 @@ pub enum Value {
     },
     Thunk(Rc<Thunk>),
     Unit,
+    RecThunk(Rc<RefCell<Option<Rc<Thunk>>>>),
 }
 
 impl PartialEq for Value {
@@ -76,6 +78,7 @@ impl PartialEq for Value {
             ) => p1 == p2 && b1 == b2 && c1 == c2,
             (Value::Unit, Value::Unit) => true,
             (Value::Thunk(l), Value::Thunk(r)) => Rc::ptr_eq(l, r),
+            (Value::RecThunk(l), Value::RecThunk(r)) => Rc::ptr_eq(l, r),
             _ => false,
         }
     }
@@ -160,6 +163,16 @@ impl TreeWalker {
     fn force(&mut self, value: Value) -> Result<Value, Error> {
         match value {
             Value::Thunk(thunk) => thunk.force(self),
+            Value::RecThunk(thunk) => {
+                if let Some(thunk) = thunk.borrow().as_ref() {
+                    thunk.force(self)
+                } else {
+                    Err(Error::NotImplemented(
+                        "Recursive thunk not defined".to_string(),
+                        SourceSpan::new(0.into(), 0),
+                    ))
+                }
+            }
             _ => Ok(value),
         }
     }
@@ -214,6 +227,20 @@ impl<'ast> ast::Visitor<'ast> for TreeWalker {
 
     fn visit_bind(&mut self, bind: &'ast Binding) -> Result<(), Self::Err> {
         let scope = self.scope()?.clone();
+
+        if bind.kind == ast::BindingKind::Rec {
+            let slot = Rc::new(RefCell::new(None));
+            let rec_name = bind.ident.name.clone();
+            let rec_scope = scope.insert(rec_name.clone(), Value::RecThunk(slot.clone()));
+
+            let thunk = Rc::new(Thunk::new(bind.expr.clone(), rec_scope));
+
+            *slot.borrow_mut() = Some(thunk.clone());
+
+            self.scope_replace(scope.insert(rec_name, Value::Thunk(thunk)));
+            return Ok(());
+        }
+
         let thunk = Rc::new(Thunk::new(bind.expr.clone(), scope.clone()));
         let new_scope = scope.insert(bind.ident.name.clone(), Value::Thunk(thunk));
         self.scope_replace(new_scope);

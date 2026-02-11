@@ -58,6 +58,8 @@ pub enum TokenKind {
     Else,
     #[token("then")]
     Then,
+    #[token("rec")]
+    Rec,
     #[token("true")]
     True,
     #[token("false")]

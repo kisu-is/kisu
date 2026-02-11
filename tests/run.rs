@@ -5,8 +5,6 @@ use std::rc::Rc;
 macro_rules! assert_eval {
     ($src:literal, $eq:expr) => {{
         let src = indoc::indoc! {$src};
-        println!("{}", src);
-
         match run(src) {
             Err(e) => panic!("{:?}", e),
             Ok(v) => assert_eq!(v, $eq),

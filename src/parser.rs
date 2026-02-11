@@ -1,11 +1,11 @@
-use crate::ast::{self, BinaryOp, Binding, Expr, Ident, List, Num, Param, Str, UnaryOp};
+use crate::ast::{self, BinaryOp, Expr, Ident, List, Num, Param, Str, UnaryOp};
 use crate::lexer::{Token, TokenIter, TokenKind};
 use crate::types::Type;
 use logos::Span;
+use std::collections::VecDeque;
 
 pub use _hide_warnings::*;
 
-// weird warning bug with the miette macros
 mod _hide_warnings {
     #![allow(unused_assignments)]
 
@@ -57,29 +57,53 @@ mod _hide_warnings {
             #[label]
             span: SourceSpan,
         },
+        #[error("{found:?} not allowed when 'terminating' feature is enabled")]
+        NotTerminating {
+            found: TokenKind,
+            #[label]
+            span: SourceSpan,
+        },
     }
 }
 
 #[derive(Clone)]
 pub struct Parser<'a> {
     source: &'a str,
-    tokens: TokenIter<'a>,
-    current_token: Token,
-    next_token: Token,
+    lexer: TokenIter<'a>,
+    buffer: VecDeque<Token>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: TokenIter<'a>, source: &'a str) -> Self {
         let mut parser = Self {
             source,
-            tokens: lexer,
-            current_token: Token::NONE,
-            next_token: Token::NONE,
+            lexer,
+            // lookahead
+            buffer: VecDeque::with_capacity(3),
         };
-        parser.advance();
-        parser.advance();
-
+        parser.fill_buffer();
         parser
+    }
+
+    fn fill_buffer(&mut self) {
+        while self.buffer.len() < self.buffer.capacity() {
+            let eof_span = if let Some(last_token) = self.buffer.back() {
+                last_token.span.clone()
+            } else {
+                0..0
+            };
+
+            match self.lexer.next() {
+                Some(token) => self.buffer.push_back(token),
+                None => {
+                    if self.buffer.is_empty() || self.buffer.back().unwrap().kind != TokenKind::Eof
+                    {
+                        self.buffer.push_back(Token::new(TokenKind::Eof, eof_span));
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     pub fn parse(&mut self) -> Result<ast::Program, Error> {
@@ -93,32 +117,46 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
+    fn current_token(&self) -> &Token {
+        self.buffer.front().unwrap_or(&Token::NONE)
+    }
+
+    #[inline]
+    fn next_token(&self) -> &Token {
+        self.buffer.get(1).unwrap_or(&Token::NONE)
+    }
+
+    #[inline]
     fn advance(&mut self) {
-        std::mem::swap(&mut self.next_token, &mut self.current_token);
-        self.next_token = self.tokens.next().unwrap_or(Token {
-            kind: TokenKind::Eof,
-            span: self.token_span().clone(),
-        });
+        self.buffer.pop_front();
+        self.fill_buffer();
     }
 
     #[inline]
     pub fn current(&self) -> &Token {
-        &self.current_token
+        self.current_token()
     }
 
     #[inline]
     pub fn next(&self) -> &Token {
-        &self.next_token
+        self.next_token()
     }
 
     #[inline]
     pub fn check(&self, kind: &crate::lexer::TokenKind) -> bool {
-        &self.current_token.kind == kind
+        &self.current_token().kind == kind
     }
 
     #[inline]
     pub fn check_next(&self, kind: &crate::lexer::TokenKind) -> bool {
-        &self.next_token.kind == kind
+        &self.next_token().kind == kind
+    }
+
+    #[inline]
+    pub fn check_next_nth(&self, n: usize, expected_kind: &TokenKind) -> bool {
+        self.buffer
+            .get(n)
+            .is_some_and(|token| &token.kind == expected_kind)
     }
 
     pub fn check_consume(&mut self, kind: &crate::lexer::TokenKind) -> Option<Token> {
@@ -131,29 +169,24 @@ impl<'a> Parser<'a> {
     }
 
     pub fn consume(&mut self) -> Token {
-        let mut token = Token::NONE;
-        std::mem::swap(&mut token, &mut self.current_token);
-        std::mem::swap(&mut self.next_token, &mut self.current_token);
-        self.next_token = self.tokens.next().unwrap_or(Token {
-            kind: TokenKind::Eof,
-            span: self.token_span().clone(),
-        });
+        let token = self.buffer.pop_front().unwrap_or(Token::NONE);
+        self.fill_buffer();
         token
     }
 
     #[inline]
     pub fn is_eof(&self) -> bool {
-        self.current_token.kind == TokenKind::Eof && self.next_token.kind == TokenKind::Eof
+        self.current_token().kind == TokenKind::Eof && self.next_token().kind == TokenKind::Eof
     }
 
     #[inline]
     fn token_kind(&self) -> &TokenKind {
-        &self.current_token.kind
+        &self.current_token().kind
     }
 
     #[inline]
     fn token_span(&self) -> &Span {
-        &self.current_token.span
+        &self.current_token().span
     }
 
     fn binary_op(&self) -> Option<BinaryOp> {
@@ -289,10 +322,10 @@ impl<'a> Parser<'a> {
     }
 
     fn expect_eof(&mut self) -> Result<(), Error> {
-        if self.current().kind == TokenKind::Eof {
+        if self.current_token().kind == TokenKind::Eof {
             Ok(())
         } else {
-            let token = &self.current_token;
+            let token = self.current_token();
             Err(Error::ExpectedEof {
                 found: token.kind.clone(),
                 span: token.span.clone().into(),
@@ -353,11 +386,29 @@ impl<'a> Parser<'a> {
 
         let mut bindings = Vec::new();
 
-        while self.check_key()
-            && (self.check_next(&TokenKind::Assign)
-                || self.check_next(&TokenKind::Colon)
-                || self.check_next(&TokenKind::Semicolon))
-        {
+        while {
+            let is_normal = self.check_key()
+                && (self.check_next(&TokenKind::Assign) || self.check_next(&TokenKind::Colon));
+
+            let is_rec = self.check(&TokenKind::Rec)
+                && self.check_next(&TokenKind::Ident)
+                && (self.check_next_nth(2, &TokenKind::Assign)
+                    || self.check_next_nth(2, &TokenKind::Colon));
+
+            is_normal || is_rec
+        } {
+            let kind = if let Some(rec) = self.check_consume(&TokenKind::Rec) {
+                if cfg!(feature = "terminating") {
+                    return Err(Error::NotTerminating {
+                        found: rec.kind,
+                        span: rec.span.into(),
+                    });
+                };
+                ast::BindingKind::Rec
+            } else {
+                ast::BindingKind::Normal
+            };
+
             let key = self.key()?;
             let constraint = self.constraint()?;
 
@@ -369,7 +420,8 @@ impl<'a> Parser<'a> {
 
             let span = key.span.start..(self.expect(TokenKind::Semicolon)?.span.end);
 
-            bindings.push(Binding {
+            bindings.push(ast::Binding {
+                kind,
                 ident: key,
                 constraint,
                 expr: Box::new(expr),
@@ -406,6 +458,7 @@ impl<'a> Parser<'a> {
             };
 
             fields.push(ast::Binding {
+                kind: ast::BindingKind::Normal,
                 span: key.span.start..expr.span().end,
                 constraint,
                 ident: key,
