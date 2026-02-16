@@ -69,6 +69,7 @@ impl<'de, 'a> de::Deserializer<'de> for Deserializer<'a> {
                 let seq_deserializer = SeqDeserializer::new(l);
                 visitor.visit_seq(seq_deserializer)
             }
+            Value::Bool(b) => visitor.visit_bool(b),
             Value::Unit => visitor.visit_unit(),
             _ => Err(de::Error::custom(format!(
                 "unsupported Value type for deserialization: {:?}",
