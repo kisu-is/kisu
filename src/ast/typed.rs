@@ -143,16 +143,14 @@ pub enum ExprKind {
 }
 
 pub trait Visitor<'ast>: Sized {
-    type Err;
-
-    fn visit_program(&mut self, program: &'ast Program) -> Result<(), Self::Err> {
+    fn visit_program(&mut self, program: &'ast Program) {
         for s in &program.structs {
-            self.visit_struct_def(s)?;
+            self.visit_struct_def(s);
         }
         self.visit_expr(&program.expr)
     }
 
-    fn visit_expr(&mut self, expr: &'ast Expr) -> Result<(), Self::Err> {
+    fn visit_expr(&mut self, expr: &'ast Expr) {
         match expr.kind.as_ref() {
             ExprKind::Number(n) => self.visit_num(n),
             ExprKind::String(s) => self.visit_str(s),
@@ -174,41 +172,19 @@ pub trait Visitor<'ast>: Sized {
         }
     }
 
-    fn visit_num(&mut self, num: &'ast Num) -> Result<(), Self::Err>;
-    fn visit_str(&mut self, str: &'ast Str) -> Result<(), Self::Err>;
-    fn visit_bool(&mut self, b: bool) -> Result<(), Self::Err>;
-    fn visit_list(&mut self, list: &'ast List) -> Result<(), Self::Err>;
-    fn visit_ident(&mut self, ident: &'ast Ident) -> Result<(), Self::Err>;
-    fn visit_unary_op(&mut self, op: &'ast UnaryOp, expr: &'ast Expr) -> Result<(), Self::Err>;
-    fn visit_binary_op(
-        &mut self,
-        op: &'ast BinaryOp,
-        lhs: &'ast Expr,
-        rhs: &'ast Expr,
-    ) -> Result<(), Self::Err>;
-    fn visit_struct_access(
-        &mut self,
-        expr: &'ast Expr,
-        ident: &'ast Ident,
-    ) -> Result<(), Self::Err>;
-    fn visit_lambda(&mut self, params: &'ast [Param], body: &'ast Expr) -> Result<(), Self::Err>;
-    fn visit_block_expr(
-        &mut self,
-        bindings: &'ast [Binding],
-        expr: &'ast Expr,
-    ) -> Result<(), Self::Err>;
-    fn visit_struct_expr(
-        &mut self,
-        fields: &'ast [Binding],
-        ty: &'ast Type,
-    ) -> Result<(), Self::Err>;
-    fn visit_app(&mut self, lhs: &'ast Expr, rhs: &'ast Expr) -> Result<(), Self::Err>;
-    fn visit_if_expr(
-        &mut self,
-        cond: &'ast Expr,
-        then_expr: &'ast Expr,
-        else_expr: &'ast Expr,
-    ) -> Result<(), Self::Err>;
-    fn visit_bind(&mut self, bind: &'ast Binding) -> Result<(), Self::Err>;
-    fn visit_struct_def(&mut self, struct_def: &'ast StructDef) -> Result<(), Self::Err>;
+    fn visit_num(&mut self, num: &'ast Num);
+    fn visit_str(&mut self, str: &'ast Str);
+    fn visit_bool(&mut self, b: bool);
+    fn visit_list(&mut self, list: &'ast List);
+    fn visit_ident(&mut self, ident: &'ast Ident);
+    fn visit_unary_op(&mut self, op: &'ast UnaryOp, expr: &'ast Expr);
+    fn visit_binary_op(&mut self, op: &'ast BinaryOp, lhs: &'ast Expr, rhs: &'ast Expr);
+    fn visit_struct_access(&mut self, expr: &'ast Expr, ident: &'ast Ident);
+    fn visit_lambda(&mut self, params: &'ast [Param], body: &'ast Expr);
+    fn visit_block_expr(&mut self, bindings: &'ast [Binding], expr: &'ast Expr);
+    fn visit_struct_expr(&mut self, fields: &'ast [Binding], ty: &'ast Type);
+    fn visit_app(&mut self, lhs: &'ast Expr, rhs: &'ast Expr);
+    fn visit_if_expr(&mut self, cond: &'ast Expr, then_expr: &'ast Expr, else_expr: &'ast Expr);
+    fn visit_bind(&mut self, bind: &'ast Binding);
+    fn visit_struct_def(&mut self, struct_def: &'ast StructDef);
 }

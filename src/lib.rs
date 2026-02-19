@@ -12,7 +12,7 @@ pub mod types;
 #[cfg(feature = "serde")]
 pub use serialize::de::from_str;
 
-use crate::target::eval::{self, Value};
+use crate::target::eval::Value;
 
 /// run kisu program with pretty printed errors
 pub fn run(source: &str) -> Result<Value, miette::Error> {
@@ -43,8 +43,8 @@ pub fn eval(source: &str) -> Result<Value, Error> {
         use crate::ast::typed::Visitor;
         use crate::target::eval::TreeWalker;
         let mut walker = TreeWalker::default();
-        walker.visit_program(&typed_ast)?;
-        walker.consume()?
+        walker.visit_program(&typed_ast);
+        walker.consume()
     };
 
     Ok(result)
@@ -55,9 +55,6 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Parser(#[from] parser::Error),
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Runtime(#[from] eval::Error),
     #[cfg(feature = "serde")]
     #[error(transparent)]
     #[diagnostic(transparent)]
