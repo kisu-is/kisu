@@ -494,7 +494,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
         self.expect(TokenKind::Pipe)?;
         self.expect(TokenKind::Colon)?;
-        let body = self.expr()?;
+        let body = self.block(true)?;
         let span = start..body.span().end;
 
         Ok(self.bump.alloc(Expr::Lambda { params, body, span }))

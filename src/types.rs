@@ -15,6 +15,7 @@ pub enum Type {
     Number,
     String,
     Bool,
+    Unit,
 }
 
 impl fmt::Display for Type {
@@ -27,6 +28,7 @@ impl fmt::Display for Type {
             Type::Number => write!(f, "Number"),
             Type::String => write!(f, "String"),
             Type::Bool => write!(f, "Bool"),
+            Type::Unit => write!(f, "Unit"),
         }
     }
 }

@@ -1,7 +1,7 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use kisu::{Type, Value, target::eval::NativeFn};
 use miette::Result;
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
 use argh::FromArgs;
 
@@ -22,13 +22,28 @@ fn builtins() -> HashMap<String, NativeFn> {
         NativeFn {
             name: "print".into(),
             fun: Box::new(|val| {
-                if let Value::String(s) = val {
+                if let Value::String(s) = &val {
                     println!("{s}");
                 }
-                Value::Bool(true)
+                Value::Unit
             }),
             arg_ty: Type::String,
-            ret_ty: Type::Bool,
+            ret_ty: Type::Unit,
+        },
+    );
+    builtins.insert(
+        "str".into(),
+        NativeFn {
+            name: "str".into(),
+            fun: Box::new(|val| {
+                if let Value::Number(n) = &val {
+                    Value::String(Rc::new(n.to_string()))
+                } else {
+                    Value::String(Rc::new("".to_string()))
+                }
+            }),
+            arg_ty: Type::Number,
+            ret_ty: Type::String,
         },
     );
     builtins
