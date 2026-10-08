@@ -1,6 +1,7 @@
 use crate::ast::typed;
 use crate::ast::typed::Visitor;
-use crate::types::Type;
+use crate::types::{Type, TypeId, TypeKind, Types};
+use bumpalo::Bump;
 use rpds::HashTrieMap;
 use std::cell::OnceCell;
 use std::cell::RefCell;
@@ -24,15 +25,33 @@ impl std::fmt::Debug for NativeFn {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Thunk {
-    expr: Box<typed::Expr>,
-    scope: Scope,
-    value: OnceCell<Value>,
+impl PartialEq for NativeFn {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.arg_ty == other.arg_ty && self.ret_ty == other.ret_ty
+    }
 }
 
-impl Thunk {
-    pub fn new(expr: Box<typed::Expr>, scope: Scope) -> Self {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Number(f64),
+    String(Rc<String>),
+    Bool(bool),
+    Struct(Rc<String>, Rc<HashMap<String, Value>>),
+    List(Rc<Vec<Value>>),
+    Lambda,
+    Unit,
+    NativeFn(Rc<NativeFn>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Thunk<'ast> {
+    expr: &'ast typed::Expr<'ast>,
+    scope: Scope<'ast>,
+    value: OnceCell<Object<'ast>>,
+}
+
+impl<'ast> Thunk<'ast> {
+    pub fn new(expr: &'ast typed::Expr<'ast>, scope: Scope<'ast>) -> Self {
         Self {
             expr,
             scope,
@@ -40,13 +59,13 @@ impl Thunk {
         }
     }
 
-    unsafe fn force(self: &Rc<Self>, walker: &mut TreeWalker) -> Value {
+    unsafe fn force(self: &Rc<Self>, walker: &mut TreeWalker<'_, 'ast>) -> Object<'ast> {
         unsafe {
             self.value
                 .get_or_init(|| {
                     let call_stack =
                         std::mem::replace(&mut walker.call_stack, vec![self.scope.clone()]);
-                    walker.visit_expr(&self.expr);
+                    walker.visit_expr(self.expr);
                     let result = walker.stack_pop();
                     walker.call_stack = call_stack;
                     result
@@ -57,230 +76,225 @@ impl Thunk {
 }
 
 #[derive(Debug, Clone)]
-pub enum Value {
+pub enum Object<'ast> {
     Number(f64),
     String(Rc<String>),
     Bool(bool),
-    Struct(Rc<String>, Rc<HashMap<String, Value>>),
-    List(Rc<Vec<Value>>),
+    Struct(&'ast str, Rc<HashMap<&'ast str, Object<'ast>>>),
+    List(Rc<Vec<Object<'ast>>>),
     Lambda {
-        params: Rc<Vec<String>>,
-        body: Rc<typed::Expr>,
-        scope: Scope,
+        params: &'ast [typed::Param<'ast>],
+        body: &'ast typed::Expr<'ast>,
+        scope: Scope<'ast>,
     },
-    Thunk(Rc<Thunk>),
+    Thunk(Rc<Thunk<'ast>>),
     Unit,
-    RecThunk(Rc<RefCell<Option<Rc<Thunk>>>>),
+    RecThunk(Rc<RefCell<Option<Rc<Thunk<'ast>>>>>),
     NativeFn(Rc<NativeFn>),
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Value::Number(l), Value::Number(r)) => l == r,
-            (Value::String(l), Value::String(r)) => l == r,
-            (Value::Struct(n1, f1), Value::Struct(n2, f2)) => n1 == n2 && f1 == f2,
-            (Value::List(l), Value::List(r)) => l == r,
-            (
-                Value::Lambda {
-                    params: p1,
-                    body: b1,
-                    scope: c1,
-                },
-                Value::Lambda {
-                    params: p2,
-                    body: b2,
-                    scope: c2,
-                },
-            ) => p1 == p2 && b1 == b2 && c1 == c2,
-            (Value::Unit, Value::Unit) => true,
-            (Value::Thunk(l), Value::Thunk(r)) => Rc::ptr_eq(l, r),
-            (Value::RecThunk(l), Value::RecThunk(r)) => Rc::ptr_eq(l, r),
-            (Value::NativeFn(l), Value::NativeFn(r)) => {
-                l.name == r.name && l.arg_ty == r.arg_ty && l.ret_ty == r.ret_ty
-            }
-            _ => false,
-        }
-    }
+#[derive(Debug, Clone, Default)]
+pub struct Scope<'ast> {
+    vars: HashTrieMap<&'ast str, Object<'ast>>,
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
-pub struct Scope {
-    vars: HashTrieMap<String, Value>,
-}
-
-impl Scope {
+impl<'ast> Scope<'ast> {
     #[inline]
-    pub fn get(&self, name: &str) -> &Value {
+    pub fn get(&self, name: &str) -> &Object<'ast> {
         self.vars.get(name).unwrap()
     }
 
     #[inline]
-    pub fn insert(&self, key: String, value: Value) -> Self {
+    pub fn insert(&self, key: &'ast str, value: Object<'ast>) -> Self {
         Self {
             vars: self.vars.insert(key, value),
         }
     }
-
-    pub fn new(bindings: HashMap<String, Value>) -> Self {
-        let mut vars = HashTrieMap::new();
-        for (name, value) in bindings {
-            vars = vars.insert(name, value);
-        }
-        Self { vars }
-    }
 }
 
-pub struct TreeWalker {
-    call_stack: Vec<Scope>,
-    stack: Vec<Value>,
+pub struct TreeWalker<'t, 'ast> {
+    types: &'t Types<'ast>,
+    bump: &'ast Bump,
+    call_stack: Vec<Scope<'ast>>,
+    stack: Vec<Object<'ast>>,
 }
 
-impl Default for TreeWalker {
-    fn default() -> Self {
+impl<'t, 'ast> TreeWalker<'t, 'ast> {
+    pub fn new(types: &'t Types<'ast>, bump: &'ast Bump) -> Self {
         Self {
+            types,
+            bump,
             call_stack: vec![Scope::default()],
             stack: Default::default(),
         }
     }
-}
 
-impl TreeWalker {
-    pub fn new(bindings: HashMap<String, Value>) -> Self {
-        let initial_scope = Scope::new(bindings);
-        Self {
-            call_stack: vec![initial_scope],
-            stack: Default::default(),
+    pub fn with_bindings(
+        types: &'t Types<'ast>,
+        bump: &'ast Bump,
+        bindings: HashMap<String, Value>,
+    ) -> Self {
+        let mut walker = Self::new(types, bump);
+        let mut scope = Scope::default();
+        for (name, value) in bindings {
+            scope = scope.insert(bump.alloc_str(&name), walker.object_of(&value));
         }
+        walker.call_stack = vec![scope];
+        walker
     }
 }
 
 #[allow(clippy::missing_safety_doc)]
-impl TreeWalker {
+impl<'ast> TreeWalker<'_, 'ast> {
     pub unsafe fn consume(mut self) -> Value {
         unsafe {
-            let value = self.stack_pop();
-            self.force_consume(value)
+            let object = self.stack_pop();
+            self.value_of(object)
         }
     }
 
-    unsafe fn force_consume(&mut self, value: Value) -> Value {
+    unsafe fn value_of(&mut self, object: Object<'ast>) -> Value {
         unsafe {
-            let value = self.force(value);
-
-            match value {
-                Value::List(values) => {
-                    let mut list = Vec::with_capacity(values.len());
-                    for val in values.iter() {
-                        list.push(self.force_consume(val.clone()));
+            match self.force(object) {
+                Object::Number(n) => Value::Number(n),
+                Object::String(s) => Value::String(s),
+                Object::Bool(b) => Value::Bool(b),
+                Object::Struct(name, fields) => {
+                    let mut map = HashMap::with_capacity(fields.len());
+                    for (key, field) in fields.iter() {
+                        map.insert(key.to_string(), self.value_of(field.clone()));
+                    }
+                    Value::Struct(Rc::new(name.to_string()), Rc::new(map))
+                }
+                Object::List(objects) => {
+                    let mut list = Vec::with_capacity(objects.len());
+                    for object in objects.iter() {
+                        list.push(self.value_of(object.clone()));
                     }
                     Value::List(Rc::new(list))
                 }
-                Value::Struct(name, value) => {
-                    let mut map = HashMap::with_capacity(value.len());
-                    for (key, val) in value.iter() {
-                        map.insert(key.clone(), self.force_consume(val.clone()));
-                    }
-                    Value::Struct(name, Rc::new(map))
-                }
-                _ => value,
+                Object::Lambda { .. } => Value::Lambda,
+                Object::Unit => Value::Unit,
+                Object::NativeFn(native_fn) => Value::NativeFn(native_fn),
+                Object::Thunk(_) | Object::RecThunk(_) => unreachable!(),
             }
         }
     }
 
+    fn object_of(&self, value: &Value) -> Object<'ast> {
+        match value {
+            Value::Number(n) => Object::Number(*n),
+            Value::String(s) => Object::String(s.clone()),
+            Value::Bool(b) => Object::Bool(*b),
+            Value::Struct(name, fields) => {
+                let mut map = HashMap::with_capacity(fields.len());
+                for (key, field) in fields.iter() {
+                    map.insert(&*self.bump.alloc_str(key), self.object_of(field));
+                }
+                Object::Struct(self.bump.alloc_str(name), Rc::new(map))
+            }
+            Value::List(values) => {
+                Object::List(Rc::new(values.iter().map(|v| self.object_of(v)).collect()))
+            }
+            Value::Lambda => unreachable!(),
+            Value::Unit => Object::Unit,
+            Value::NativeFn(native_fn) => Object::NativeFn(native_fn.clone()),
+        }
+    }
+
     #[inline]
-    unsafe fn force(&mut self, value: Value) -> Value {
+    unsafe fn force(&mut self, object: Object<'ast>) -> Object<'ast> {
         unsafe {
-            match value {
-                Value::Thunk(thunk) => thunk.force(self),
-                Value::RecThunk(thunk) => {
+            match object {
+                Object::Thunk(thunk) => thunk.force(self),
+                Object::RecThunk(thunk) => {
                     if let Some(thunk) = thunk.borrow().as_ref() {
                         thunk.force(self)
                     } else {
                         unreachable!()
                     }
                 }
-                _ => value,
+                _ => object,
             }
         }
     }
 
     #[inline]
-    fn scope(&self) -> &Scope {
+    fn scope(&self) -> &Scope<'ast> {
         self.call_stack.last().unwrap()
     }
 
     #[inline]
-    fn scope_replace(&mut self, scope: Scope) {
+    fn scope_replace(&mut self, scope: Scope<'ast>) {
         *self.call_stack.last_mut().unwrap() = scope;
     }
 
     #[inline]
-    fn scope_push(&mut self, scope: Scope) {
+    fn scope_push(&mut self, scope: Scope<'ast>) {
         self.call_stack.push(scope)
     }
 
     #[inline]
-    fn scope_pop(&mut self) -> Scope {
+    fn scope_pop(&mut self) -> Scope<'ast> {
         self.call_stack.pop().unwrap()
     }
 
     #[inline]
-    fn stack_push(&mut self, value: Value) {
-        self.stack.push(value)
+    fn stack_push(&mut self, object: Object<'ast>) {
+        self.stack.push(object)
     }
 
     #[inline]
-    fn stack_pop(&mut self) -> Value {
+    fn stack_pop(&mut self) -> Object<'ast> {
         self.stack.pop().unwrap()
     }
 }
 
-impl<'ast> typed::Visitor<'ast> for TreeWalker {
-    unsafe fn visit_program(&mut self, program: &'ast typed::Program) {
-        unsafe { self.visit_expr(&program.expr) }
+impl<'ast> typed::Visitor<'ast> for TreeWalker<'_, 'ast> {
+    unsafe fn visit_program(&mut self, program: &typed::Program<'ast>) {
+        unsafe { self.visit_expr(program.expr) }
     }
 
-    unsafe fn visit_ident(&mut self, ident: &'ast typed::Ident) {
+    unsafe fn visit_ident(&mut self, ident: &'ast typed::Ident<'ast>) {
         unsafe {
-            let val = self.scope().get(&ident.name).clone();
+            let val = self.scope().get(ident.name).clone();
             let forced_val = self.force(val);
             self.stack_push(forced_val);
         }
     }
 
-    unsafe fn visit_bind(&mut self, bind: &'ast typed::Binding) {
+    unsafe fn visit_bind(&mut self, bind: &'ast typed::Binding<'ast>) {
         let scope = self.scope().clone();
 
         if bind.kind == typed::BindingKind::Rec {
             let slot = Rc::new(RefCell::new(None));
-            let rec_name = bind.ident.name.clone();
-            let rec_scope = scope.insert(rec_name.clone(), Value::RecThunk(slot.clone()));
+            let rec_name = bind.ident.name;
+            let rec_scope = scope.insert(rec_name, Object::RecThunk(slot.clone()));
 
-            let thunk = Rc::new(Thunk::new(bind.expr.clone(), rec_scope));
+            let thunk = Rc::new(Thunk::new(bind.expr, rec_scope));
             *slot.borrow_mut() = Some(thunk.clone());
 
-            self.scope_replace(scope.insert(rec_name, Value::Thunk(thunk)));
+            self.scope_replace(scope.insert(rec_name, Object::Thunk(thunk)));
         } else {
-            let thunk = Rc::new(Thunk::new(bind.expr.clone(), scope.clone()));
-            let new_scope = scope.insert(bind.ident.name.clone(), Value::Thunk(thunk));
+            let thunk = Rc::new(Thunk::new(bind.expr, scope.clone()));
+            let new_scope = scope.insert(bind.ident.name, Object::Thunk(thunk));
             self.scope_replace(new_scope);
         }
     }
 
     unsafe fn visit_num(&mut self, num: &'ast typed::Num) {
-        self.stack_push(Value::Number(num.0));
+        self.stack_push(Object::Number(num.0));
     }
 
-    unsafe fn visit_str(&mut self, str: &'ast typed::Str) {
-        self.stack_push(Value::String(Rc::new(str.0.clone())));
+    unsafe fn visit_str(&mut self, str: &'ast typed::Str<'ast>) {
+        self.stack_push(Object::String(Rc::new(str.0.to_string())));
     }
 
     unsafe fn visit_bool(&mut self, b: bool) {
-        self.stack_push(Value::Bool(b));
+        self.stack_push(Object::Bool(b));
     }
 
-    unsafe fn visit_unary_op(&mut self, op: &'ast typed::UnaryOp, expr: &'ast typed::Expr) {
+    unsafe fn visit_unary_op(&mut self, op: &'ast typed::UnaryOp, expr: &'ast typed::Expr<'ast>) {
         unsafe {
             self.visit_expr(expr);
             let val = self.stack_pop();
@@ -288,12 +302,12 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
 
             let result = match op {
                 typed::UnaryOp::Neg => match forced_val {
-                    Value::Number(n) => Value::Number(-n),
+                    Object::Number(n) => Object::Number(-n),
                     _ => unreachable!(),
                 },
                 typed::UnaryOp::Not => match forced_val {
-                    Value::Number(n) => Value::Bool(n == 0.0),
-                    Value::Bool(b) => Value::Bool(!b),
+                    Object::Number(n) => Object::Bool(n == 0.0),
+                    Object::Bool(b) => Object::Bool(!b),
                     _ => unreachable!(),
                 },
             };
@@ -305,9 +319,9 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
     unsafe fn visit_binary_op(
         &mut self,
         op: &'ast typed::BinaryOp,
-        lhs: &'ast typed::Expr,
-        rhs: &'ast typed::Expr,
-        ty: &'ast Type,
+        lhs: &'ast typed::Expr<'ast>,
+        rhs: &'ast typed::Expr<'ast>,
+        ty: &'ast TypeId,
     ) {
         unsafe {
             self.visit_expr(lhs);
@@ -317,68 +331,68 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
             let lhs_val = self.stack_pop();
             let lhs_forced = self.force(lhs_val);
 
-            match ty {
-                Type::Number => {
-                    let l = if let Value::Number(n) = lhs_forced {
+            match self.types.kind(*ty) {
+                TypeKind::Number => {
+                    let l = if let Object::Number(n) = lhs_forced {
                         n
                     } else {
                         std::hint::unreachable_unchecked()
                     };
-                    let r = if let Value::Number(n) = rhs_forced {
+                    let r = if let Object::Number(n) = rhs_forced {
                         n
                     } else {
                         std::hint::unreachable_unchecked()
                     };
 
                     let result = match op {
-                        typed::BinaryOp::Add => Value::Number(l + r),
-                        typed::BinaryOp::Sub => Value::Number(l - r),
-                        typed::BinaryOp::Mul => Value::Number(l * r),
-                        typed::BinaryOp::Div => Value::Number(l / r),
-                        typed::BinaryOp::Eq => Value::Bool(l == r),
-                        typed::BinaryOp::NotEq => Value::Bool(l != r),
-                        typed::BinaryOp::Lt => Value::Bool(l < r),
-                        typed::BinaryOp::Gt => Value::Bool(l > r),
-                        typed::BinaryOp::LtEq => Value::Bool(l <= r),
+                        typed::BinaryOp::Add => Object::Number(l + r),
+                        typed::BinaryOp::Sub => Object::Number(l - r),
+                        typed::BinaryOp::Mul => Object::Number(l * r),
+                        typed::BinaryOp::Div => Object::Number(l / r),
+                        typed::BinaryOp::Eq => Object::Bool(l == r),
+                        typed::BinaryOp::NotEq => Object::Bool(l != r),
+                        typed::BinaryOp::Lt => Object::Bool(l < r),
+                        typed::BinaryOp::Gt => Object::Bool(l > r),
+                        typed::BinaryOp::LtEq => Object::Bool(l <= r),
                         _ => std::hint::unreachable_unchecked(),
                     };
                     self.stack_push(result);
                 }
-                Type::String => {
-                    let l = if let Value::String(s) = lhs_forced {
+                TypeKind::String => {
+                    let l = if let Object::String(s) = lhs_forced {
                         s
                     } else {
                         std::hint::unreachable_unchecked()
                     };
-                    let r = if let Value::String(s) = rhs_forced {
+                    let r = if let Object::String(s) = rhs_forced {
                         s
                     } else {
                         std::hint::unreachable_unchecked()
                     };
 
                     let result = match op {
-                        typed::BinaryOp::Add => Value::String(Rc::new(l.to_string() + &r)),
-                        typed::BinaryOp::Eq => Value::Bool(l == r),
-                        typed::BinaryOp::NotEq => Value::Bool(l != r),
+                        typed::BinaryOp::Add => Object::String(Rc::new(l.to_string() + &r)),
+                        typed::BinaryOp::Eq => Object::Bool(l == r),
+                        typed::BinaryOp::NotEq => Object::Bool(l != r),
                         _ => std::hint::unreachable_unchecked(),
                     };
                     self.stack_push(result);
                 }
-                Type::Bool => {
-                    let l = if let Value::Bool(b) = lhs_forced {
+                TypeKind::Bool => {
+                    let l = if let Object::Bool(b) = lhs_forced {
                         b
                     } else {
                         std::hint::unreachable_unchecked()
                     };
-                    let r = if let Value::Bool(b) = rhs_forced {
+                    let r = if let Object::Bool(b) = rhs_forced {
                         b
                     } else {
                         std::hint::unreachable_unchecked()
                     };
 
                     let result = match op {
-                        typed::BinaryOp::Eq => Value::Bool(l == r),
-                        typed::BinaryOp::NotEq => Value::Bool(l != r),
+                        typed::BinaryOp::Eq => Object::Bool(l == r),
+                        typed::BinaryOp::NotEq => Object::Bool(l != r),
                         _ => std::hint::unreachable_unchecked(),
                     };
                     self.stack_push(result);
@@ -390,8 +404,8 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
 
     unsafe fn visit_struct_expr(
         &mut self,
-        fields: &'ast [typed::Binding],
-        struct_type: &'ast Type,
+        fields: &'ast [typed::Binding<'ast>],
+        name: &'ast typed::TypeIdent<'ast>,
     ) {
         unsafe {
             self.scope_push(self.scope().clone());
@@ -401,61 +415,55 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
             }
 
             let final_scope = self.scope().clone();
-            let mut fields_map = HashMap::new();
+            let mut fields_map = HashMap::with_capacity(fields.len());
             for bind in fields {
-                let val = final_scope.get(&bind.ident.name).clone();
+                let val = final_scope.get(bind.ident.name).clone();
                 let forced_val = self.force(val);
-                fields_map.insert(bind.ident.name.clone(), forced_val);
+                fields_map.insert(bind.ident.name, forced_val);
             }
 
             self.scope_pop();
-            self.stack_push(Value::Struct(
-                Rc::new(struct_type.to_string()),
-                Rc::new(fields_map),
-            ));
+            self.stack_push(Object::Struct(name.name, Rc::new(fields_map)));
         }
     }
 
-    unsafe fn visit_app(&mut self, lhs: &'ast typed::Expr, rhs: &'ast typed::Expr) {
+    unsafe fn visit_app(&mut self, lhs: &'ast typed::Expr<'ast>, rhs: &'ast typed::Expr<'ast>) {
         unsafe {
             self.visit_expr(lhs);
             let val = self.stack_pop();
             let forced_val = self.force(val);
             let scope = self.scope().clone();
-            let arg_thunk = Rc::new(Thunk::new(Box::new(rhs.clone()), scope));
-            let arg_val = Value::Thunk(arg_thunk);
+            let arg_val = Object::Thunk(Rc::new(Thunk::new(rhs, scope)));
 
             let result_val = match forced_val {
-                Value::Lambda {
+                Object::Lambda {
                     params,
                     body,
                     scope,
                 } => {
-                    let mut params_clone = (*params).clone();
-                    let param_name = params_clone.remove(0);
+                    let Some((param, rest)) = params.split_first() else {
+                        unreachable!()
+                    };
+                    let new_scope = scope.insert(param.ident.name, arg_val);
 
-                    let new_scope = scope.insert(param_name, arg_val);
-                    self.scope_push(new_scope);
-
-                    if !params_clone.is_empty() {
-                        let new_lambda_scope = self.scope().clone();
-                        let new_lambda = Value::Lambda {
-                            params: Rc::new(params_clone),
+                    if !rest.is_empty() {
+                        Object::Lambda {
+                            params: rest,
                             body,
-                            scope: new_lambda_scope,
-                        };
-                        self.scope_pop();
-                        new_lambda
+                            scope: new_scope,
+                        }
                     } else {
-                        self.visit_expr(&body);
+                        self.scope_push(new_scope);
+                        self.visit_expr(body);
                         let final_result = self.stack_pop();
                         self.scope_pop();
                         final_result
                     }
                 }
-                Value::NativeFn(native_fn) => {
-                    let arg_forced = self.force(arg_val);
-                    (native_fn.fun)(arg_forced)
+                Object::NativeFn(native_fn) => {
+                    let arg = self.value_of(arg_val);
+                    let result = (native_fn.fun)(arg);
+                    self.object_of(&result)
                 }
                 _ => {
                     unreachable!();
@@ -468,8 +476,8 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
 
     unsafe fn visit_block_expr(
         &mut self,
-        bindings: &'ast [typed::Binding],
-        expr: &'ast typed::Expr,
+        bindings: &'ast [typed::Binding<'ast>],
+        expr: &'ast typed::Expr<'ast>,
     ) {
         unsafe {
             self.scope_push(self.scope().clone());
@@ -487,35 +495,40 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
         }
     }
 
-    unsafe fn visit_lambda(&mut self, params: &'ast [typed::Param], body: &'ast typed::Expr) {
-        let scope = self.scope().clone();
-        let names = params.iter().map(|p| p.ident.name.clone()).collect();
-
-        let lambda = Value::Lambda {
-            params: Rc::new(names),
-            body: Rc::new(body.clone()),
-            scope,
+    unsafe fn visit_lambda(
+        &mut self,
+        params: &'ast [typed::Param<'ast>],
+        body: &'ast typed::Expr<'ast>,
+    ) {
+        let lambda = Object::Lambda {
+            params,
+            body,
+            scope: self.scope().clone(),
         };
         self.stack_push(lambda);
     }
 
-    unsafe fn visit_list(&mut self, list: &'ast typed::List) {
-        let mut result = vec![];
+    unsafe fn visit_list(&mut self, list: &'ast typed::List<'ast>) {
         let scope = self.scope().clone();
-        for expr in &list.exprs {
-            let thunk = Rc::new(Thunk::new(Box::new(expr.clone()), scope.clone()));
-            result.push(Value::Thunk(thunk));
-        }
-        self.stack_push(Value::List(Rc::new(result)));
+        let result = list
+            .exprs
+            .iter()
+            .map(|expr| Object::Thunk(Rc::new(Thunk::new(expr, scope.clone()))))
+            .collect();
+        self.stack_push(Object::List(Rc::new(result)));
     }
 
-    unsafe fn visit_struct_access(&mut self, expr: &'ast typed::Expr, ident: &'ast typed::Ident) {
+    unsafe fn visit_struct_access(
+        &mut self,
+        expr: &'ast typed::Expr<'ast>,
+        ident: &'ast typed::Ident<'ast>,
+    ) {
         unsafe {
             self.visit_expr(expr);
             let val = self.stack_pop();
             let forced_val = self.force(val);
             let result = match forced_val {
-                Value::Struct(_, map) => map.get(&ident.name).cloned(),
+                Object::Struct(_, map) => map.get(ident.name).cloned(),
                 _ => {
                     unreachable!()
                 }
@@ -527,9 +540,9 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
 
     unsafe fn visit_if_expr(
         &mut self,
-        cond: &'ast typed::Expr,
-        then_expr: &'ast typed::Expr,
-        else_expr: &'ast typed::Expr,
+        cond: &'ast typed::Expr<'ast>,
+        then_expr: &'ast typed::Expr<'ast>,
+        else_expr: &'ast typed::Expr<'ast>,
     ) {
         unsafe {
             self.visit_expr(cond);
@@ -537,7 +550,7 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
             let forced_cond = self.force(cond_val);
 
             let is_truthy = match forced_cond {
-                Value::Bool(b) => b,
+                Object::Bool(b) => b,
                 _ => unreachable!(),
             };
 
@@ -549,33 +562,5 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker {
         }
     }
 
-    unsafe fn visit_struct_def(&mut self, _struct_def: &'ast typed::StructDef) {}
-
-    unsafe fn visit_expr(&mut self, expr: &'ast typed::Expr) {
-        unsafe {
-            match expr.kind.as_ref() {
-                typed::ExprKind::Number(n) => self.visit_num(n),
-                typed::ExprKind::String(s) => self.visit_str(s),
-                typed::ExprKind::Bool(b) => self.visit_bool(*b),
-                typed::ExprKind::List(l) => self.visit_list(l),
-                typed::ExprKind::Ident(i) => self.visit_ident(i),
-                typed::ExprKind::Unary { op, expr } => self.visit_unary_op(op, expr),
-                typed::ExprKind::Binary { op, lhs, rhs, ty } => {
-                    self.visit_binary_op(op, lhs, rhs, ty)
-                }
-                typed::ExprKind::StructAccess { expr, ident } => {
-                    self.visit_struct_access(expr, ident)
-                }
-                typed::ExprKind::Lambda { params, body } => self.visit_lambda(params, body),
-                typed::ExprKind::Block { bindings, expr } => self.visit_block_expr(bindings, expr),
-                typed::ExprKind::Struct { fields, ty } => self.visit_struct_expr(fields, ty),
-                typed::ExprKind::App { lhs, rhs } => self.visit_app(lhs, rhs),
-                typed::ExprKind::IfExpr {
-                    cond,
-                    then_expr,
-                    else_expr,
-                } => self.visit_if_expr(cond, then_expr, else_expr),
-            }
-        }
-    }
+    unsafe fn visit_struct_def(&mut self, _struct_def: &'ast typed::StructDef<'ast>) {}
 }

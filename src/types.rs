@@ -2,8 +2,10 @@ use crate::ast::untyped::{
     BinaryOp, Binding, Expr, Ident, List, Num, Param, Program, Str, UnaryOp, Visitor,
 };
 use crate::ast::{typed, untyped};
-use miette::SourceSpan;
-use std::collections::{HashMap, HashSet};
+use crate::span::Span;
+use bumpalo::Bump;
+use bumpalo::collections::Vec as BumpVec;
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,7 +13,7 @@ pub enum Type {
     Var(u32),
     Lambda(Box<Type>, Box<Type>),
     List(Box<Type>),
-    Struct(typed::TypeIdent),
+    Struct(String),
     Number,
     String,
     Bool,
@@ -24,7 +26,7 @@ impl fmt::Display for Type {
             Type::Var(n) => write!(f, "t{}", n),
             Type::Lambda(arg, ret) => write!(f, "(fn {} -> {})", arg, ret),
             Type::List(t) => write!(f, "[{}]", t),
-            Type::Struct(ident) => write!(f, "{}", ident.name),
+            Type::Struct(name) => write!(f, "{}", name),
             Type::Number => write!(f, "Number"),
             Type::String => write!(f, "String"),
             Type::Bool => write!(f, "Bool"),
@@ -75,339 +77,433 @@ mod _hide_warnings {
     }
 }
 
-#[derive(Default)]
-pub struct TypeChecker {
-    subst: HashMap<u32, Type>,
-    count: u32,
-    scope: Scope,
-    program: Option<typed::Program>,
-    struct_defs: HashMap<String, typed::StructDef>,
-    last_expr: Option<typed::Expr>,
-    last_binding: Option<typed::Binding>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TypeId(u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypeKind<'ast> {
+    Var(u32),
+    Lambda(TypeId, TypeId),
+    List(TypeId),
+    Struct(&'ast str),
+    Number,
+    String,
+    Bool,
+    Unit,
 }
 
-impl TypeChecker {
-    pub fn new_with_native(native_types: HashMap<String, Type>) -> Self {
-        let mut checker = TypeChecker::default();
+#[derive(Debug, Clone, Copy)]
+struct TypeVar {
+    binding: Option<TypeId>,
+    level: u32,
+}
+
+#[derive(Debug)]
+pub struct Types<'ast> {
+    kinds: Vec<TypeKind<'ast>>,
+    interned: HashMap<TypeKind<'ast>, TypeId>,
+    vars: Vec<TypeVar>,
+}
+
+impl<'ast> Types<'ast> {
+    pub const NUMBER: TypeId = TypeId(0);
+    pub const STRING: TypeId = TypeId(1);
+    pub const BOOL: TypeId = TypeId(2);
+    pub const UNIT: TypeId = TypeId(3);
+
+    fn new() -> Self {
+        let mut types = Self {
+            kinds: Vec::new(),
+            interned: HashMap::new(),
+            vars: Vec::new(),
+        };
+        for kind in [
+            TypeKind::Number,
+            TypeKind::String,
+            TypeKind::Bool,
+            TypeKind::Unit,
+        ] {
+            types.intern(kind);
+        }
+        types
+    }
+
+    fn push(&mut self, kind: TypeKind<'ast>) -> TypeId {
+        let id = TypeId(self.kinds.len() as u32);
+        self.kinds.push(kind);
+        id
+    }
+
+    fn intern(&mut self, kind: TypeKind<'ast>) -> TypeId {
+        if let Some(&id) = self.interned.get(&kind) {
+            return id;
+        }
+        let id = self.push(kind);
+        self.interned.insert(kind, id);
+        id
+    }
+
+    fn new_var(&mut self, level: u32) -> TypeId {
+        let var = self.vars.len() as u32;
+        self.vars.push(TypeVar {
+            binding: None,
+            level,
+        });
+        self.push(TypeKind::Var(var))
+    }
+
+    pub fn resolve(&self, mut ty: TypeId) -> TypeId {
+        while let TypeKind::Var(var) = self.kinds[ty.0 as usize]
+            && let Some(binding) = self.vars[var as usize].binding
+        {
+            ty = binding;
+        }
+        ty
+    }
+
+    pub fn kind(&self, ty: TypeId) -> TypeKind<'ast> {
+        self.kinds[self.resolve(ty).0 as usize]
+    }
+
+    pub fn to_type(&self, ty: TypeId) -> Type {
+        match self.kind(ty) {
+            TypeKind::Var(var) => Type::Var(var),
+            TypeKind::Lambda(arg, ret) => {
+                Type::Lambda(Box::new(self.to_type(arg)), Box::new(self.to_type(ret)))
+            }
+            TypeKind::List(ty) => Type::List(Box::new(self.to_type(ty))),
+            TypeKind::Struct(name) => Type::Struct(name.to_string()),
+            TypeKind::Number => Type::Number,
+            TypeKind::String => Type::String,
+            TypeKind::Bool => Type::Bool,
+            TypeKind::Unit => Type::Unit,
+        }
+    }
+
+    fn occurs(&mut self, var: u32, level: u32, ty: TypeId) -> bool {
+        match self.kind(ty) {
+            TypeKind::Var(other) => {
+                if other == var {
+                    return true;
+                }
+                let other = &mut self.vars[other as usize];
+                other.level = other.level.min(level);
+                false
+            }
+            TypeKind::Lambda(arg, ret) => {
+                self.occurs(var, level, arg) || self.occurs(var, level, ret)
+            }
+            TypeKind::List(ty) => self.occurs(var, level, ty),
+            _ => false,
+        }
+    }
+
+    fn free_vars(&self, ty: TypeId, level: u32, vars: &mut Vec<u32>) {
+        match self.kind(ty) {
+            TypeKind::Var(var) => {
+                if self.vars[var as usize].level > level && !vars.contains(&var) {
+                    vars.push(var);
+                }
+            }
+            TypeKind::Lambda(arg, ret) => {
+                self.free_vars(arg, level, vars);
+                self.free_vars(ret, level, vars);
+            }
+            TypeKind::List(ty) => self.free_vars(ty, level, vars),
+            _ => (),
+        }
+    }
+
+    fn substitute(&mut self, ty: TypeId, subst: &[(u32, TypeId)]) -> TypeId {
+        let ty = self.resolve(ty);
+        match self.kind(ty) {
+            TypeKind::Var(var) => subst
+                .iter()
+                .find(|(from, _)| *from == var)
+                .map_or(ty, |&(_, to)| to),
+            TypeKind::Lambda(arg, ret) => {
+                let arg = self.substitute(arg, subst);
+                let ret = self.substitute(ret, subst);
+                self.intern(TypeKind::Lambda(arg, ret))
+            }
+            TypeKind::List(ty) => {
+                let ty = self.substitute(ty, subst);
+                self.intern(TypeKind::List(ty))
+            }
+            _ => ty,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Scheme<'ast> {
+    vars: &'ast [u32],
+    ty: TypeId,
+}
+
+impl Scheme<'_> {
+    fn mono(ty: TypeId) -> Self {
+        Self { vars: &[], ty }
+    }
+}
+
+#[derive(Default)]
+struct Scope<'ast> {
+    schemes: HashMap<&'ast str, Vec<Scheme<'ast>>>,
+    history: Vec<&'ast str>,
+}
+
+impl<'ast> Scope<'ast> {
+    fn extend(&mut self, name: &'ast str, scheme: Scheme<'ast>) {
+        self.schemes.entry(name).or_default().push(scheme);
+        self.history.push(name);
+    }
+
+    fn get(&self, name: &str) -> Option<Scheme<'ast>> {
+        self.schemes.get(name).and_then(|s| s.last()).copied()
+    }
+
+    fn mark(&self) -> usize {
+        self.history.len()
+    }
+
+    fn restore(&mut self, mark: usize) {
+        for name in self.history.drain(mark..) {
+            if let Some(schemes) = self.schemes.get_mut(name) {
+                schemes.pop();
+            }
+        }
+    }
+}
+
+pub struct TypeChecker<'ast> {
+    bump: &'ast Bump,
+    types: Types<'ast>,
+    scope: Scope<'ast>,
+    struct_defs: HashMap<&'ast str, typed::StructDef<'ast>>,
+    structs: &'ast [typed::StructDef<'ast>],
+    level: u32,
+    last_expr: Option<typed::Expr<'ast>>,
+    last_binding: Option<typed::Binding<'ast>>,
+}
+
+impl<'ast> TypeChecker<'ast> {
+    pub fn new(bump: &'ast Bump) -> Self {
+        Self {
+            bump,
+            types: Types::new(),
+            scope: Scope::default(),
+            struct_defs: HashMap::new(),
+            structs: &[],
+            level: 0,
+            last_expr: None,
+            last_binding: None,
+        }
+    }
+
+    pub fn new_with_native(bump: &'ast Bump, native_types: HashMap<String, Type>) -> Self {
+        let mut checker = TypeChecker::new(bump);
         for (name, ty) in native_types {
-            let scheme = checker.generalize(&checker.scope, &ty);
-            checker.scope.extend(name, scheme);
+            checker.level += 1;
+            let ty = checker.lower_type(&ty, &mut Vec::new());
+            checker.level -= 1;
+            let scheme = checker.generalize(ty);
+            checker.scope.extend(bump.alloc_str(&name), scheme);
         }
         checker
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        subst: HashMap<u32, Type>,
-        count: u32,
-        scope: Scope,
-        program: Option<typed::Program>,
-        struct_defs: HashMap<String, typed::StructDef>,
-        last_expr: Option<typed::Expr>,
-        last_binding: Option<typed::Binding>,
-    ) -> Self {
-        Self {
-            subst,
-            count,
-            scope,
-            program,
-            struct_defs,
-            last_expr,
-            last_binding,
+    pub fn consume(mut self) -> Result<typed::Program<'ast>, Error> {
+        let expr = self.alloc_expr();
+        Ok(typed::Program {
+            expr,
+            structs: self.structs,
+            types: self.types,
+        })
+    }
+
+    fn new_var(&mut self) -> TypeId {
+        self.types.new_var(self.level)
+    }
+
+    fn take_expr(&mut self) -> typed::Expr<'ast> {
+        self.last_expr.take().unwrap()
+    }
+
+    fn alloc_expr(&mut self) -> &'ast typed::Expr<'ast> {
+        let expr = self.take_expr();
+        self.bump.alloc(expr)
+    }
+
+    fn set_expr(&mut self, kind: typed::ExprKind<'ast>, span: Span, ty: TypeId) {
+        self.last_expr = Some(typed::Expr { kind, span, ty });
+    }
+
+    fn type_error(&self, t1: TypeId, t2: TypeId, span: Span) -> Error {
+        Error::UnexpectedType {
+            t1: self.types.to_type(t1).to_string(),
+            t2: self.types.to_type(t2).to_string(),
+            span: span.into(),
         }
     }
-    pub fn consume(mut self) -> Result<typed::Program, Error> {
-        Ok(self.program.take().unwrap())
-    }
 
-    fn new_var(&mut self) -> Type {
-        let id = self.count;
-        self.count += 1;
-        Type::Var(id)
-    }
-
-    fn apply(&self, ty: &Type) -> Type {
+    fn lower_type(&mut self, ty: &Type, vars: &mut Vec<(u32, TypeId)>) -> TypeId {
         match ty {
-            Type::Var(id) => {
-                if let Some(t) = self.subst.get(id) {
-                    self.apply(t)
-                } else {
-                    ty.clone()
+            Type::Var(var) => {
+                if let Some(&(_, ty)) = vars.iter().find(|(from, _)| from == var) {
+                    return ty;
                 }
+                let ty = self.new_var();
+                vars.push((*var, ty));
+                ty
             }
             Type::Lambda(arg, ret) => {
-                Type::Lambda(Box::new(self.apply(arg)), Box::new(self.apply(ret)))
+                let arg = self.lower_type(arg, vars);
+                let ret = self.lower_type(ret, vars);
+                self.types.intern(TypeKind::Lambda(arg, ret))
             }
-            Type::List(t) => Type::List(Box::new(self.apply(t))),
-            Type::Struct(ident) => Type::Struct(ident.clone()),
-            _ => ty.clone(),
+            Type::List(ty) => {
+                let ty = self.lower_type(ty, vars);
+                self.types.intern(TypeKind::List(ty))
+            }
+            Type::Struct(name) => {
+                let name = match self.struct_defs.get_key_value(name.as_str()) {
+                    Some((name, _)) => *name,
+                    None => self.bump.alloc_str(name),
+                };
+                self.types.intern(TypeKind::Struct(name))
+            }
+            Type::Number => Types::NUMBER,
+            Type::String => Types::STRING,
+            Type::Bool => Types::BOOL,
+            Type::Unit => Types::UNIT,
         }
     }
 
-    fn unify(&mut self, t1: &Type, t2: &Type, span: SourceSpan) -> Result<Type, Error> {
-        let t1 = self.apply(t1);
-        let t2 = self.apply(t2);
+    fn unify(&mut self, t1: TypeId, t2: TypeId, span: Span) -> Result<TypeId, Error> {
+        let t1 = self.types.resolve(t1);
+        let t2 = self.types.resolve(t2);
 
         if t1 == t2 {
             return Ok(t1);
         }
 
-        if let Type::Var(id) = t1 {
-            self.unify_var(id, &t2, span)?;
-            return Ok(t2);
-        }
-
-        if let Type::Var(id) = t2 {
-            self.unify_var(id, &t1, span)?;
-            return Ok(t1);
-        }
-
-        match (&t1, &t2) {
-            (Type::Lambda(arg, ret), Type::Lambda(arg2, ret2)) => {
-                let arg_ty = self.unify(arg, arg2, span)?;
-                let ret_ty = self.unify(ret, ret2, span)?;
-                Ok(Type::Lambda(Box::new(arg_ty), Box::new(ret_ty)))
+        match (self.types.kind(t1), self.types.kind(t2)) {
+            (TypeKind::Var(var), _) => {
+                self.bind_var(var, t2, span)?;
+                Ok(t2)
             }
-            (Type::List(t1), Type::List(t2)) => {
-                let ty = self.unify(t1, t2, span)?;
-                Ok(Type::List(Box::new(ty)))
+            (_, TypeKind::Var(var)) => {
+                self.bind_var(var, t1, span)?;
+                Ok(t1)
             }
-            (Type::Struct(ident), Type::Struct(ident2)) => {
-                if ident.name == ident2.name {
-                    Ok(t1)
-                } else {
-                    Err(Error::UnexpectedType {
-                        t1: t1.to_string(),
-                        t2: t2.to_string(),
-                        span,
-                    })
-                }
+            (TypeKind::Lambda(arg1, ret1), TypeKind::Lambda(arg2, ret2)) => {
+                self.unify(arg1, arg2, span)?;
+                self.unify(ret1, ret2, span)?;
+                Ok(t1)
             }
-            _ => Err(Error::UnexpectedType {
-                t1: t1.to_string(),
-                t2: t2.to_string(),
-                span,
-            }),
+            (TypeKind::List(elem1), TypeKind::List(elem2)) => {
+                self.unify(elem1, elem2, span)?;
+                Ok(t1)
+            }
+            _ => Err(self.type_error(t1, t2, span)),
         }
     }
 
-    fn unify_var(&mut self, id: u32, ty: &Type, span: SourceSpan) -> Result<(), Error> {
-        if let Some(t) = self.subst.get(&id).cloned() {
-            self.unify(&t, ty, span)?;
-            return Ok(());
+    fn bind_var(&mut self, var: u32, ty: TypeId, span: Span) -> Result<(), Error> {
+        let level = self.types.vars[var as usize].level;
+        if self.types.occurs(var, level, ty) {
+            return Err(Error::InfiniteType { span: span.into() });
         }
-        if self.occurs(id, ty) {
-            return Err(Error::InfiniteType { span });
-        }
-        self.subst.insert(id, ty.clone());
+        self.types.vars[var as usize].binding = Some(ty);
         Ok(())
     }
 
-    fn occurs(&self, id: u32, ty: &Type) -> bool {
-        match ty {
-            Type::Var(var_id) => {
-                if *var_id == id {
-                    true
-                } else if let Some(t) = self.subst.get(var_id) {
-                    self.occurs(id, t)
-                } else {
-                    false
-                }
-            }
-            Type::Lambda(arg, ret) => self.occurs(id, arg) || self.occurs(id, ret),
-            Type::List(t) => self.occurs(id, t),
-            Type::Struct(_) => false,
-            _ => false,
-        }
-    }
-
-    fn generalize(&self, scope: &Scope, ty: &Type) -> Scheme {
-        let vars = self
-            .ftv(ty)
-            .difference(&self.ftv_scope(scope))
-            .cloned()
-            .collect();
+    fn generalize(&mut self, ty: TypeId) -> Scheme<'ast> {
+        let mut vars = Vec::new();
+        self.types.free_vars(ty, self.level, &mut vars);
         Scheme {
-            vars,
-            ty: ty.clone(),
+            vars: self.bump.alloc_slice_copy(&vars),
+            ty,
         }
     }
 
-    fn instantiate(&mut self, scheme: &Scheme) -> Type {
-        let mut subst = HashMap::new();
-        for var in &scheme.vars {
-            subst.insert(*var, self.new_var());
+    fn instantiate(&mut self, scheme: Scheme<'ast>) -> TypeId {
+        if scheme.vars.is_empty() {
+            return scheme.ty;
         }
-        self.apply_scheme(&subst, &scheme.ty)
-    }
-
-    fn apply_scheme(&self, subst: &HashMap<u32, Type>, ty: &Type) -> Type {
-        match ty {
-            Type::Var(id) => {
-                if let Some(t) = subst.get(id) {
-                    t.clone()
-                } else {
-                    ty.clone()
-                }
-            }
-            Type::Lambda(arg, ret) => Type::Lambda(
-                Box::new(self.apply_scheme(subst, arg)),
-                Box::new(self.apply_scheme(subst, ret)),
-            ),
-            Type::List(t) => Type::List(Box::new(self.apply_scheme(subst, t))),
-            Type::Struct(ident) => Type::Struct(ident.clone()),
-            _ => ty.clone(),
-        }
-    }
-
-    fn ftv(&self, ty: &Type) -> HashSet<u32> {
-        let mut free_vars = HashSet::new();
-        let ty = self.apply(ty);
-        match &ty {
-            Type::Var(id) => {
-                free_vars.insert(*id);
-            }
-            Type::Lambda(arg, ret) => {
-                free_vars.extend(self.ftv(arg));
-                free_vars.extend(self.ftv(ret));
-            }
-            Type::List(t) => {
-                free_vars.extend(self.ftv(t));
-            }
-            Type::Struct(_) => (),
-            _ => (),
-        }
-        free_vars
-    }
-
-    fn ftv_scope(&self, scope: &Scope) -> HashSet<u32> {
-        let mut free_vars = HashSet::new();
-        for scheme in scope.0.values() {
-            for var in self.ftv(&scheme.ty) {
-                if !scheme.vars.contains(&var) {
-                    free_vars.insert(var);
-                }
-            }
-        }
-        free_vars
+        let subst: Vec<(u32, TypeId)> = scheme
+            .vars
+            .iter()
+            .map(|&var| (var, self.new_var()))
+            .collect();
+        self.types.substitute(scheme.ty, &subst)
     }
 }
 
-impl<'ast> Visitor<'ast> for TypeChecker {
+impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
     type Err = Error;
 
     fn visit_program(&mut self, program: &'ast Program<'ast>) -> Result<(), Self::Err> {
-        let mut structs = Vec::new();
+        let mut structs = BumpVec::with_capacity_in(program.structs.len(), self.bump);
         for s in program.structs.iter() {
             self.visit_struct_def(s)?;
-            let name = s.name.name.clone();
-            structs.push(self.struct_defs.get(&name).unwrap().clone());
+            structs.push(self.struct_defs[s.name.name]);
         }
+        self.structs = structs.into_bump_slice();
+        self.visit_expr(program.expr)
+    }
 
-        self.visit_expr(&program.expr)?;
-        let ty_expr = self.last_expr.take().unwrap();
+    fn visit_ident(&mut self, ident: &'ast Ident<'ast>) -> Result<(), Self::Err> {
+        let Some(scheme) = self.scope.get(ident.name) else {
+            return Err(Error::UndefinedIdent {
+                name: ident.name.to_string(),
+                span: ident.span.into(),
+            });
+        };
 
-        self.program = Some(typed::Program {
-            expr: ty_expr,
-            structs,
-        });
+        let ty = self.instantiate(scheme);
+        self.set_expr(
+            typed::ExprKind::Ident(typed::Ident {
+                name: ident.name,
+                span: ident.span,
+                ty,
+            }),
+            ident.span,
+            ty,
+        );
         Ok(())
     }
 
-    fn visit_ident(&mut self, ident: &'ast Ident) -> Result<(), Self::Err> {
-        if let Some(scheme) = self.scope.get(&ident.name).cloned() {
-            let ty = self.instantiate(&scheme);
-            self.last_expr = Some(typed::Expr {
-                kind: Box::new(typed::ExprKind::Ident(typed::Ident {
-                    name: ident.name.clone(),
-                    span: ident.span.clone(),
-                    ty: ty.clone(),
-                })),
-                span: ident.span.clone(),
-                ty,
-            });
-            Ok(())
-        } else {
-            Err(Error::UndefinedIdent {
-                name: ident.name.to_string(),
-                span: ident.span.clone().into(),
-            })
-        }
-    }
-
     fn visit_bind(&mut self, bind: &'ast untyped::Binding<'ast>) -> Result<(), Self::Err> {
-        let mut checker = TypeChecker::new(
-            self.subst.clone(),
-            self.count,
-            self.scope.clone(),
-            None,
-            self.struct_defs.clone(),
-            None,
-            None,
-        );
+        self.level += 1;
 
-        if bind.kind == untyped::BindingKind::Rec {
-            let tv = checker.new_var();
-            let scheme = Scheme {
-                vars: vec![],
-                ty: tv.clone(),
-            };
-            checker.scope.extend(bind.ident.name.clone(), scheme);
-            checker.visit_expr(bind.expr)?;
+        let expr = if bind.kind == untyped::BindingKind::Rec {
+            let tv = self.new_var();
+            let mark = self.scope.mark();
+            self.scope.extend(bind.ident.name, Scheme::mono(tv));
+            self.visit_expr(bind.expr)?;
+            self.scope.restore(mark);
 
-            let ty_expr = checker.last_expr.take().unwrap();
-            let inferred_ty = ty_expr.ty.clone();
-
-            let unified_ty = self.unify(&tv, &inferred_ty, bind.ident.span.clone().into())?;
-
-            self.subst = checker.subst;
-            self.count = checker.count;
-
-            let ty = if let Some(constraint) = &bind.constraint {
-                self.unify(&unified_ty, constraint, bind.ident.span.clone().into())?
-            } else {
-                unified_ty
-            };
-
-            let scheme = self.generalize(&self.scope, &ty);
-
-            self.scope.extend(bind.ident.name.clone(), scheme);
-
-            self.last_binding = Some(typed::Binding {
-                kind: match bind.kind {
-                    untyped::BindingKind::Normal => typed::BindingKind::Normal,
-                    untyped::BindingKind::Rec => typed::BindingKind::Rec,
-                },
-                ident: typed::Ident {
-                    name: bind.ident.name.clone(),
-                    span: bind.ident.span.clone(),
-                    ty: ty.clone(),
-                },
-                expr: Box::new(ty_expr),
-                span: bind.span.clone(),
-                ty,
-            });
-
-            return Ok(());
-        }
-
-        checker.visit_expr(bind.expr)?;
-
-        let ty_expr = checker.last_expr.take().unwrap();
-        let inferred_ty = ty_expr.ty.clone();
-
-        self.subst = checker.subst;
-        self.count = checker.count;
-
-        let ty = if let Some(constraint) = &bind.constraint {
-            self.unify(&inferred_ty, constraint, bind.ident.span.clone().into())?
+            let expr = self.take_expr();
+            self.unify(tv, expr.ty, bind.ident.span)?;
+            expr
         } else {
-            inferred_ty
+            self.visit_expr(bind.expr)?;
+            self.take_expr()
         };
 
-        let scheme = self.generalize(&self.scope, &ty);
+        let ty = if let Some(constraint) = &bind.constraint {
+            let constraint = self.lower_type(constraint, &mut Vec::new());
+            self.unify(expr.ty, constraint, bind.ident.span)?
+        } else {
+            expr.ty
+        };
 
-        self.scope.extend(bind.ident.name.clone(), scheme);
+        self.level -= 1;
+
+        let scheme = self.generalize(ty);
+        self.scope.extend(bind.ident.name, scheme);
 
         self.last_binding = Some(typed::Binding {
             kind: match bind.kind {
@@ -415,12 +511,12 @@ impl<'ast> Visitor<'ast> for TypeChecker {
                 untyped::BindingKind::Rec => typed::BindingKind::Rec,
             },
             ident: typed::Ident {
-                name: bind.ident.name.clone(),
-                span: bind.ident.span.clone(),
-                ty: ty.clone(),
+                name: bind.ident.name,
+                span: bind.ident.span,
+                ty,
             },
-            expr: Box::new(ty_expr),
-            span: bind.span.clone(),
+            expr: self.bump.alloc(expr),
+            span: bind.span,
             ty,
         });
 
@@ -428,37 +524,25 @@ impl<'ast> Visitor<'ast> for TypeChecker {
     }
 
     fn visit_num(&mut self, num: &'ast Num) -> Result<(), Self::Err> {
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::Number(typed::Num(
-                num.0,
-                num.1.clone(),
-                Type::Number,
-            ))),
-            span: num.1.clone(),
-            ty: Type::Number,
-        });
+        self.set_expr(
+            typed::ExprKind::Number(typed::Num(num.0, num.1, Types::NUMBER)),
+            num.1,
+            Types::NUMBER,
+        );
         Ok(())
     }
 
-    fn visit_str(&mut self, s: &'ast Str) -> Result<(), Self::Err> {
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::String(typed::Str(
-                s.0.clone(),
-                s.1.clone(),
-                Type::String,
-            ))),
-            span: s.1.clone(),
-            ty: Type::String,
-        });
+    fn visit_str(&mut self, s: &'ast Str<'ast>) -> Result<(), Self::Err> {
+        self.set_expr(
+            typed::ExprKind::String(typed::Str(s.0, s.1, Types::STRING)),
+            s.1,
+            Types::STRING,
+        );
         Ok(())
     }
 
     fn visit_bool(&mut self, b: bool) -> Result<(), Self::Err> {
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::Bool(b)),
-            span: 0..0,
-            ty: Type::Bool,
-        });
+        self.set_expr(typed::ExprKind::Bool(b), Span::default(), Types::BOOL);
         Ok(())
     }
 
@@ -468,38 +552,25 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         expr: &'ast Expr<'ast>,
     ) -> Result<(), Self::Err> {
         self.visit_expr(expr)?;
-        let ty_expr = self.last_expr.take().unwrap();
+        let ty_expr = self.alloc_expr();
 
+        let span = ty_expr.span.to(expr.span());
         let inferred_ty = match op {
-            UnaryOp::Neg => {
-                let ty = self.unify(
-                    &ty_expr.ty,
-                    &Type::Number,
-                    (ty_expr.span.start..expr.span().end).into(),
-                )?;
-                Ok(ty)
-            }
-            UnaryOp::Not => {
-                let ty = self.unify(
-                    &ty_expr.ty,
-                    &Type::Bool,
-                    (ty_expr.span.start..expr.span().end).into(),
-                )?;
-                Ok(ty)
-            }
-        }?;
+            UnaryOp::Neg => self.unify(ty_expr.ty, Types::NUMBER, span)?,
+            UnaryOp::Not => self.unify(ty_expr.ty, Types::BOOL, span)?,
+        };
 
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::Unary {
+        self.set_expr(
+            typed::ExprKind::Unary {
                 op: match op {
                     untyped::UnaryOp::Neg => typed::UnaryOp::Neg,
                     untyped::UnaryOp::Not => typed::UnaryOp::Not,
                 },
                 expr: ty_expr,
-            }),
-            span: expr.span(),
-            ty: inferred_ty,
-        });
+            },
+            expr.span(),
+            inferred_ty,
+        );
         Ok(())
     }
 
@@ -510,50 +581,43 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         rhs: &'ast Expr<'ast>,
     ) -> Result<(), Self::Err> {
         self.visit_expr(lhs)?;
-        let ty_lhs = self.last_expr.take().unwrap();
+        let ty_lhs = self.alloc_expr();
         self.visit_expr(rhs)?;
-        let ty_rhs = self.last_expr.take().unwrap();
+        let ty_rhs = self.alloc_expr();
 
-        let span: SourceSpan = (lhs.span().start..rhs.span().end).into();
+        let span = lhs.span().to(rhs.span());
 
-        let operand_ty: Type;
-        let result_ty: Type;
-        match op {
+        let (operand_ty, result_ty) = match op {
             BinaryOp::Add => {
-                if ty_lhs.ty == Type::String || ty_rhs.ty == Type::String {
-                    self.unify(&ty_lhs.ty, &Type::String, span)?;
-                    self.unify(&ty_rhs.ty, &Type::String, span)?;
-                    operand_ty = Type::String;
-                    result_ty = Type::String;
+                let operand_ty = if self.types.resolve(ty_lhs.ty) == Types::STRING
+                    || self.types.resolve(ty_rhs.ty) == Types::STRING
+                {
+                    Types::STRING
                 } else {
-                    self.unify(&ty_lhs.ty, &Type::Number, span)?;
-                    self.unify(&ty_rhs.ty, &Type::Number, span)?;
-                    operand_ty = Type::Number;
-                    result_ty = Type::Number;
-                }
+                    Types::NUMBER
+                };
+                self.unify(ty_lhs.ty, operand_ty, span)?;
+                self.unify(ty_rhs.ty, operand_ty, span)?;
+                (operand_ty, operand_ty)
             }
             BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                self.unify(&ty_lhs.ty, &Type::Number, span)?;
-                self.unify(&ty_rhs.ty, &Type::Number, span)?;
-                operand_ty = Type::Number;
-                result_ty = Type::Number;
+                self.unify(ty_lhs.ty, Types::NUMBER, span)?;
+                self.unify(ty_rhs.ty, Types::NUMBER, span)?;
+                (Types::NUMBER, Types::NUMBER)
             }
             BinaryOp::Eq
             | BinaryOp::NotEq
             | BinaryOp::Lt
             | BinaryOp::Gt
             | BinaryOp::LtEq
-            | BinaryOp::GtEq => {
-                operand_ty = self.unify(&ty_lhs.ty, &ty_rhs.ty, span)?;
-                result_ty = Type::Bool;
-            }
+            | BinaryOp::GtEq => (self.unify(ty_lhs.ty, ty_rhs.ty, span)?, Types::BOOL),
             BinaryOp::Dot => {
                 unreachable!();
             }
-        }
+        };
 
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::Binary {
+        self.set_expr(
+            typed::ExprKind::Binary {
                 op: match op {
                     untyped::BinaryOp::Add => typed::BinaryOp::Add,
                     untyped::BinaryOp::Sub => typed::BinaryOp::Sub,
@@ -570,89 +634,71 @@ impl<'ast> Visitor<'ast> for TypeChecker {
                 lhs: ty_lhs,
                 rhs: ty_rhs,
                 ty: operand_ty,
-            }),
-            span: (lhs.span().start..rhs.span().end),
-            ty: result_ty,
-        });
+            },
+            span,
+            result_ty,
+        );
         Ok(())
     }
 
     fn visit_struct_expr(
         &mut self,
-        type_name: &'ast untyped::TypeIdent,
+        type_name: &'ast untyped::TypeIdent<'ast>,
         fields: &'ast [Binding<'ast>],
     ) -> Result<(), Self::Err> {
-        let struct_span: SourceSpan = type_name.span.clone().into();
-        let struct_def =
-            self.struct_defs
-                .get(&type_name.name)
-                .ok_or_else(|| Error::UnknownType {
-                    name: type_name.name.clone(),
-                    span: struct_span,
-                })?;
+        let Some(struct_def) = self.struct_defs.get(type_name.name).copied() else {
+            return Err(Error::UnknownType {
+                name: type_name.name.to_string(),
+                span: type_name.span.into(),
+            });
+        };
 
-        let mut expr_fields: HashMap<String, Type> = struct_def
+        let mut expected_fields: HashMap<&str, TypeId> = struct_def
             .fields
             .iter()
-            .map(|f| (f.ident.name.clone(), f.ty.clone()))
+            .map(|f| (f.ident.name, f.ty))
             .collect();
 
-        let mut ty_fields = Vec::with_capacity(fields.len());
+        let mut ty_fields = BumpVec::with_capacity_in(fields.len(), self.bump);
 
         for bind in fields {
-            let mut checker = TypeChecker::new(
-                self.subst.clone(),
-                self.count,
-                self.scope.clone(),
-                None,
-                self.struct_defs.clone(),
-                None,
-                None,
-            );
-            checker.visit_bind(bind)?;
-            self.subst = checker.subst;
-            self.count = checker.count;
+            let mark = self.scope.mark();
+            self.visit_bind(bind)?;
+            self.scope.restore(mark);
 
-            let ty_bind = checker.last_binding.take().unwrap();
-            let inf_ty = ty_bind.ty.clone();
+            let ty_bind = self.last_binding.take().unwrap();
 
-            if let Some(expr_ty) = expr_fields.remove(&bind.ident.name) {
-                self.unify(&inf_ty, &expr_ty, bind.ident.span.clone().into())?;
-                ty_fields.push(ty_bind);
-            } else {
+            let Some(expected_ty) = expected_fields.remove(bind.ident.name) else {
                 return Err(Error::UndefinedIdent {
-                    name: bind.ident.name.clone(),
-                    span: bind.ident.span.clone().into(),
+                    name: bind.ident.name.to_string(),
+                    span: bind.ident.span.into(),
                 });
-            }
+            };
+            self.unify(ty_bind.ty, expected_ty, bind.ident.span)?;
+            ty_fields.push(ty_bind);
         }
 
-        if !expr_fields.is_empty() {
+        if !expected_fields.is_empty() {
             return Err(Error::UnexpectedType {
                 t1: "Missing fields".to_string(),
-                t2: format!("Expected: {:?}", expr_fields.keys()),
-                span: struct_span,
+                t2: format!("Expected: {:?}", expected_fields.keys()),
+                span: type_name.span.into(),
             });
         }
 
-        let struct_ty = Type::Struct(typed::TypeIdent {
-            name: type_name.name.clone(),
-            span: type_name.span.clone(),
-            ty: Box::new(self.new_var()),
-        });
-
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::Struct {
-                fields: ty_fields,
-                ty: struct_ty.clone(),
-            }),
-            span: (type_name.span.start
-                ..fields
-                    .last()
-                    .map_or(type_name.span.clone(), |b| b.span.clone())
-                    .end),
-            ty: struct_ty,
-        });
+        self.set_expr(
+            typed::ExprKind::Struct {
+                name: typed::TypeIdent {
+                    name: struct_def.name.name,
+                    span: type_name.span,
+                },
+                fields: ty_fields.into_bump_slice(),
+            },
+            type_name
+                .span
+                .to(fields.last().map_or(type_name.span, |b| b.span)),
+            struct_def.ty,
+        );
         Ok(())
     }
 
@@ -660,47 +706,41 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         &mut self,
         struct_def: &'ast untyped::StructDef<'ast>,
     ) -> Result<(), Self::Err> {
-        let name = struct_def.name.name.clone();
-        if self.struct_defs.contains_key(&name) {
+        let name = struct_def.name.name;
+        if self.struct_defs.contains_key(name) {
             return Err(Error::DuplicateDef {
-                name,
-                span: struct_def.span.clone().into(),
+                name: name.to_string(),
+                span: struct_def.span.into(),
             });
         }
 
-        let ty_type_ident = typed::TypeIdent {
-            name: struct_def.name.name.clone(),
-            span: struct_def.name.span.clone(),
-            ty: Box::new(self.new_var()),
-        };
-
-        let mut ty_fields = Vec::new();
+        let mut ty_fields = BumpVec::with_capacity_in(struct_def.fields.len(), self.bump);
         for field in struct_def.fields.iter() {
-            let field_tv = self.new_var();
-            self.unify(&field_tv, &field.ty, field.span.clone().into())?;
-
-            let ty_ident = typed::Ident {
-                name: field.ident.name.clone(),
-                span: field.ident.span.clone(),
-                ty: field_tv.clone(),
-            };
+            let field_ty = self.lower_type(&field.ty, &mut Vec::new());
             ty_fields.push(typed::StructField {
-                ident: ty_ident,
-                ty: field_tv,
-                span: field.span.clone(),
+                ident: typed::Ident {
+                    name: field.ident.name,
+                    span: field.ident.span,
+                    ty: field_ty,
+                },
+                ty: field_ty,
+                span: field.span,
             });
         }
 
-        let tv = self.new_var();
-        let new_ty_struct_def = typed::StructDef {
-            name: ty_type_ident,
-            fields: ty_fields,
-            span: struct_def.span.clone(),
-            ty: tv,
-        };
-
-        self.struct_defs
-            .insert(name.clone(), new_ty_struct_def.clone());
+        let ty = self.types.intern(TypeKind::Struct(name));
+        self.struct_defs.insert(
+            name,
+            typed::StructDef {
+                name: typed::TypeIdent {
+                    name,
+                    span: struct_def.name.span,
+                },
+                fields: ty_fields.into_bump_slice(),
+                span: struct_def.span,
+                ty,
+            },
+        );
 
         Ok(())
     }
@@ -710,80 +750,50 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         bindings: &'ast [Binding<'ast>],
         expr: &'ast Expr<'ast>,
     ) -> Result<(), Self::Err> {
-        let mut scope = self.scope.clone();
-        let mut ty_bindings = Vec::with_capacity(bindings.len());
+        let mark = self.scope.mark();
+        let mut ty_bindings = BumpVec::with_capacity_in(bindings.len(), self.bump);
 
         for bind in bindings {
-            let mut checker = TypeChecker::new(
-                self.subst.clone(),
-                self.count,
-                scope.clone(),
-                None,
-                self.struct_defs.clone(),
-                None,
-                None,
-            );
-            checker.visit_bind(bind)?;
-            self.subst = checker.subst;
-            self.count = checker.count;
-            scope = checker.scope;
-            ty_bindings.push(checker.last_binding.take().unwrap());
+            self.visit_bind(bind)?;
+            ty_bindings.push(self.last_binding.take().unwrap());
         }
 
-        let mut checker = TypeChecker::new(
-            self.subst.clone(),
-            self.count,
-            scope.clone(),
-            None,
-            self.struct_defs.clone(),
-            None,
-            None,
-        );
+        self.visit_expr(expr)?;
+        self.scope.restore(mark);
+        let ty_expr = self.alloc_expr();
 
-        checker.visit_expr(expr)?;
-        let ty_expr = checker.last_expr.take().unwrap();
-        let expr_ty = ty_expr.ty.clone();
-        self.subst = checker.subst;
-        self.count = checker.count;
-        self.scope = checker.scope;
-
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::Block {
-                bindings: ty_bindings,
+        self.set_expr(
+            typed::ExprKind::Block {
+                bindings: ty_bindings.into_bump_slice(),
                 expr: ty_expr,
-            }),
-            span: bindings
+            },
+            bindings
                 .first()
-                .map_or(expr.span(), |b| b.span.clone())
-                .start..expr.span().end,
-            ty: expr_ty,
-        });
+                .map_or(expr.span(), |b| b.span)
+                .to(expr.span()),
+            ty_expr.ty,
+        );
         Ok(())
     }
 
     fn visit_app(&mut self, lhs: &'ast Expr<'ast>, rhs: &'ast Expr<'ast>) -> Result<(), Self::Err> {
         self.visit_expr(lhs)?;
-        let ty_lhs = self.last_expr.take().unwrap();
+        let ty_lhs = self.alloc_expr();
         self.visit_expr(rhs)?;
-        let ty_rhs = self.last_expr.take().unwrap();
+        let ty_rhs = self.alloc_expr();
 
-        let func_ty = ty_lhs.ty.clone();
-        let arg_ty = ty_rhs.ty.clone();
+        let ret_ty = self.new_var();
+        let expected_func_ty = self.types.intern(TypeKind::Lambda(ty_rhs.ty, ret_ty));
+        self.unify(ty_lhs.ty, expected_func_ty, lhs.span())?;
 
-        let tv = self.new_var();
-        let expected_func_ty = Type::Lambda(Box::new(arg_ty), Box::new(tv.clone()));
-
-        self.unify(&func_ty, &expected_func_ty, lhs.span().into())?;
-        let inferred_ty = self.apply(&tv);
-
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::App {
+        self.set_expr(
+            typed::ExprKind::App {
                 lhs: ty_lhs,
                 rhs: ty_rhs,
-            }),
-            span: (lhs.span().start..rhs.span().end),
-            ty: inferred_ty,
-        });
+            },
+            lhs.span().to(rhs.span()),
+            ret_ty,
+        );
         Ok(())
     }
 
@@ -792,141 +802,124 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         params: &'ast [Param<'ast>],
         body: &'ast Expr<'ast>,
     ) -> Result<(), Self::Err> {
-        let mut scope = self.scope.clone();
-        let mut ty_params = Vec::new();
-        let mut param_tys = Vec::new();
+        let mark = self.scope.mark();
+        let mut ty_params = BumpVec::with_capacity_in(params.len(), self.bump);
 
         for param in params {
             let tv = self.new_var();
             if let Some(constraint) = &param.constraint {
-                self.unify(&tv, constraint, param.ident.span.clone().into())?;
+                let constraint = self.lower_type(constraint, &mut Vec::new());
+                self.unify(tv, constraint, param.ident.span)?;
             }
 
-            scope.extend(
-                param.ident.name.clone(),
-                Scheme {
-                    vars: vec![],
-                    ty: tv.clone(),
-                },
-            );
-            param_tys.push(tv.clone());
+            self.scope.extend(param.ident.name, Scheme::mono(tv));
             ty_params.push(typed::Param {
                 ident: typed::Ident {
-                    name: param.ident.name.clone(),
-                    span: param.ident.span.clone(),
-                    ty: tv.clone(),
+                    name: param.ident.name,
+                    span: param.ident.span,
+                    ty: tv,
                 },
                 ty: tv,
-                span: param.span.clone(),
+                span: param.span,
             });
         }
 
-        let mut typer = TypeChecker {
-            subst: self.subst.clone(),
-            count: self.count,
-            scope,
-            program: None,
-            struct_defs: self.struct_defs.clone(),
-            last_expr: None,
-            last_binding: None,
-        };
+        self.visit_expr(body)?;
+        self.scope.restore(mark);
+        let ty_body = self.alloc_expr();
 
-        typer.visit_expr(body)?;
-        let ty_body = typer.last_expr.take().unwrap();
-        let body_ty = ty_body.ty.clone();
-
-        self.subst = typer.subst;
-        self.count = typer.count;
-
-        let mut lambda_ty = body_ty;
-        for param_ty in param_tys.iter().rev() {
-            lambda_ty = Type::Lambda(Box::new(self.apply(param_ty)), Box::new(lambda_ty));
+        let mut lambda_ty = ty_body.ty;
+        for param in ty_params.iter().rev() {
+            lambda_ty = self.types.intern(TypeKind::Lambda(param.ty, lambda_ty));
         }
 
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::Lambda {
-                params: ty_params,
+        self.set_expr(
+            typed::ExprKind::Lambda {
+                params: ty_params.into_bump_slice(),
                 body: ty_body,
-            }),
-            span: params.first().map_or(body.span(), |p| p.span.clone()).start..body.span().end,
-            ty: lambda_ty,
-        });
+            },
+            params
+                .first()
+                .map_or(body.span(), |p| p.span)
+                .to(body.span()),
+            lambda_ty,
+        );
         Ok(())
     }
 
     fn visit_list(&mut self, list: &'ast List<'ast>) -> Result<(), Self::Err> {
-        let tv = self.new_var();
-        let mut ty_exprs = Vec::with_capacity(list.exprs.len());
+        let elem_ty = self.new_var();
+        let mut ty_exprs = BumpVec::with_capacity_in(list.exprs.len(), self.bump);
 
         for expr in list.exprs.iter() {
             self.visit_expr(expr)?;
-            let ty_expr = self.last_expr.take().unwrap();
-            self.unify(&tv, &ty_expr.ty, expr.span().into())?;
+            let ty_expr = self.take_expr();
+            self.unify(elem_ty, ty_expr.ty, expr.span())?;
             ty_exprs.push(ty_expr);
         }
 
-        let inferred_ty = Type::List(Box::new(self.apply(&tv)));
-
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::List(typed::List {
-                exprs: ty_exprs,
-                span: list.span.clone(),
-                ty: inferred_ty.clone(),
-            })),
-            span: list.span.clone(),
-            ty: inferred_ty,
-        });
+        let ty = self.types.intern(TypeKind::List(elem_ty));
+        self.set_expr(
+            typed::ExprKind::List(typed::List {
+                exprs: ty_exprs.into_bump_slice(),
+                span: list.span,
+                ty,
+            }),
+            list.span,
+            ty,
+        );
         Ok(())
     }
 
     fn visit_struct_access(
         &mut self,
         expr: &'ast Expr<'ast>,
-        ident: &'ast Ident,
+        ident: &'ast Ident<'ast>,
     ) -> Result<(), Self::Err> {
         self.visit_expr(expr)?;
-        let ty_expr = self.last_expr.take().unwrap();
-        let expr_ty = ty_expr.ty.clone();
+        let ty_expr = self.alloc_expr();
 
-        let inferred_ty = if let Type::Struct(struct_ty_ident) = self.apply(&expr_ty) {
-            let struct_def_span: SourceSpan = struct_ty_ident.span.clone().into();
-            let struct_def =
-                self.struct_defs
-                    .get(&struct_ty_ident.name)
-                    .ok_or_else(|| Error::UnknownType {
-                        name: struct_ty_ident.name.clone(),
-                        span: struct_def_span,
-                    })?;
-            struct_def
-                .fields
-                .iter()
-                .find(|f| f.ident.name == ident.name)
-                .map(|f| f.ty.clone())
-                .ok_or_else(|| Error::UndefinedIdent {
-                    name: ident.name.clone(),
-                    span: ident.span.clone().into(),
-                })?
-        } else {
+        let TypeKind::Struct(name) = self.types.kind(ty_expr.ty) else {
             return Err(Error::UnexpectedType {
-                t1: format!("Expected struct type, found {}", expr_ty),
+                t1: format!(
+                    "Expected struct type, found {}",
+                    self.types.to_type(ty_expr.ty)
+                ),
                 t2: "Struct".to_string(),
                 span: expr.span().into(),
             });
         };
-        let inferred_field_ty = inferred_ty;
 
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::StructAccess {
+        let struct_def = self
+            .struct_defs
+            .get(name)
+            .ok_or_else(|| Error::UnknownType {
+                name: name.to_string(),
+                span: expr.span().into(),
+            })?;
+
+        let field_ty = struct_def
+            .fields
+            .iter()
+            .find(|f| f.ident.name == ident.name)
+            .map(|f| f.ty)
+            .ok_or_else(|| Error::UndefinedIdent {
+                name: ident.name.to_string(),
+                span: ident.span.into(),
+            })?;
+
+        self.set_expr(
+            typed::ExprKind::StructAccess {
                 expr: ty_expr,
                 ident: typed::Ident {
-                    name: ident.name.clone(),
-                    span: ident.span.clone(),
-                    ty: inferred_field_ty.clone(),
+                    name: ident.name,
+                    span: ident.span,
+                    ty: field_ty,
                 },
-            }),
-            span: (expr.span().start..ident.span.end),
-            ty: inferred_field_ty,
-        });
+            },
+            expr.span().to(ident.span),
+            field_ty,
+        );
         Ok(())
     }
 
@@ -937,53 +930,28 @@ impl<'ast> Visitor<'ast> for TypeChecker {
         else_expr: &'ast Expr<'ast>,
     ) -> Result<(), Self::Err> {
         self.visit_expr(cond)?;
-        let ty_cond = self.last_expr.take().unwrap();
-        self.unify(&ty_cond.ty, &Type::Bool, cond.span().into())?;
+        let ty_cond = self.alloc_expr();
+        self.unify(ty_cond.ty, Types::BOOL, cond.span())?;
 
         self.visit_expr(then_expr)?;
-        let ty_then = self.last_expr.take().unwrap();
+        let ty_then = self.alloc_expr();
         self.visit_expr(else_expr)?;
-        let ty_else = self.last_expr.take().unwrap();
-        self.unify(&ty_then.ty, &ty_else.ty, then_expr.span().into())?;
+        let ty_else = self.alloc_expr();
+        self.unify(ty_then.ty, ty_else.ty, then_expr.span())?;
 
-        let inferred_ty = ty_then.ty.clone();
-
-        self.last_expr = Some(typed::Expr {
-            kind: Box::new(typed::ExprKind::IfExpr {
+        self.set_expr(
+            typed::ExprKind::IfExpr {
                 cond: ty_cond,
                 then_expr: ty_then,
                 else_expr: ty_else,
-            }),
-            span: (cond.span().start..else_expr.span().end),
-            ty: inferred_ty,
-        });
+            },
+            cond.span().to(else_expr.span()),
+            ty_then.ty,
+        );
         Ok(())
     }
 
     fn visit_type(&mut self, _ty: &'ast Type) -> Result<(), Self::Err> {
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Scheme {
-    vars: Vec<u32>,
-    ty: Type,
-}
-
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct Scope(HashMap<String, Scheme>);
-
-impl Scope {
-    pub fn new() -> Self {
-        Scope(HashMap::new())
-    }
-
-    fn extend(&mut self, name: String, scheme: Scheme) {
-        self.0.insert(name, scheme);
-    }
-
-    fn get(&self, name: &str) -> Option<&Scheme> {
-        self.0.get(name)
     }
 }

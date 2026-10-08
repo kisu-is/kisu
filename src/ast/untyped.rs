@@ -1,30 +1,35 @@
+use crate::span::Span;
 use crate::{lexer::TokenKind, types::Type};
 use bumpalo::collections::Vec;
-use logos::Span;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Ident {
-    pub name: String,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ident<'ast> {
+    pub name: &'ast str,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TypeIdent {
-    pub name: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TypeIdent<'ast> {
+    pub name: &'ast str,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding<'ast> {
     pub kind: BindingKind,
-    pub ident: Ident,
+    pub ident: Ident<'ast>,
     pub constraint: Option<Type>,
     pub expr: &'ast Expr<'ast>,
     pub span: Span,
 }
 
 impl<'ast> Binding<'ast> {
-    pub fn new(ident: Ident, constraint: Option<Type>, expr: &'ast Expr<'ast>, span: Span) -> Self {
+    pub fn new(
+        ident: Ident<'ast>,
+        constraint: Option<Type>,
+        expr: &'ast Expr<'ast>,
+        span: Span,
+    ) -> Self {
         Self {
             kind: BindingKind::Normal,
             ident,
@@ -43,52 +48,52 @@ pub enum BindingKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param<'ast> {
-    pub ident: Ident,
+    pub ident: Ident<'ast>,
     pub constraint: Option<Type>,
     pub expr: Option<&'ast Expr<'ast>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StructField {
-    pub ident: Ident,
+pub struct StructField<'ast> {
+    pub ident: Ident<'ast>,
     pub ty: Type,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDef<'ast> {
-    pub name: TypeIdent,
-    pub fields: Vec<'ast, StructField>,
+    pub name: TypeIdent<'ast>,
+    pub fields: Vec<'ast, StructField<'ast>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program<'ast> {
     pub structs: Vec<'ast, StructDef<'ast>>,
-    pub expr: Expr<'ast>,
+    pub expr: &'ast Expr<'ast>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Str(pub String, pub Span);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Str<'ast>(pub &'ast str, pub Span);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Num(pub f64, pub Span);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct List<'ast> {
-    pub exprs: Vec<'ast, Expr<'ast>>,
+    pub exprs: Vec<'ast, &'ast Expr<'ast>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr<'ast> {
     Number(Num),
-    String(Str),
+    String(Str<'ast>),
     Bool(bool),
     List(List<'ast>),
-    Ident(Ident),
-    TypeIdent(TypeIdent),
+    Ident(Ident<'ast>),
+    TypeIdent(TypeIdent<'ast>),
     Unary {
         op: UnaryOp,
         expr: &'ast Expr<'ast>,
@@ -102,7 +107,7 @@ pub enum Expr<'ast> {
     },
     StructAccess {
         expr: &'ast Expr<'ast>,
-        ident: Ident,
+        ident: Ident<'ast>,
         span: Span,
     },
     Lambda {
@@ -116,7 +121,7 @@ pub enum Expr<'ast> {
         span: Span,
     },
     Struct {
-        type_name: TypeIdent,
+        type_name: TypeIdent<'ast>,
         fields: Vec<'ast, Binding<'ast>>,
         span: Span,
     },
@@ -136,20 +141,20 @@ pub enum Expr<'ast> {
 impl<'ast> Expr<'ast> {
     pub fn span(&self) -> Span {
         match self {
-            Expr::Number(n) => n.1.clone(),
-            Expr::String(s) => s.1.clone(),
-            Expr::Bool(_) => 0..0,
-            Expr::List(list) => list.span.clone(),
-            Expr::Ident(ident) => ident.span.clone(),
-            Expr::Unary { span, .. } => span.clone(),
-            Expr::Binary { span, .. } => span.clone(),
-            Expr::StructAccess { span, .. } => span.clone(),
-            Expr::Lambda { span, .. } => span.clone(),
-            Expr::Block { span, .. } => span.clone(),
-            Expr::Struct { span, .. } => span.clone(),
-            Expr::App { span, .. } => span.clone(),
-            Expr::IfExpr { span, .. } => span.clone(),
-            Expr::TypeIdent(TypeIdent { span, .. }) => span.clone(),
+            Expr::Number(n) => n.1,
+            Expr::String(s) => s.1,
+            Expr::Bool(_) => Span::default(),
+            Expr::List(list) => list.span,
+            Expr::Ident(ident) => ident.span,
+            Expr::Unary { span, .. } => *span,
+            Expr::Binary { span, .. } => *span,
+            Expr::StructAccess { span, .. } => *span,
+            Expr::Lambda { span, .. } => *span,
+            Expr::Block { span, .. } => *span,
+            Expr::Struct { span, .. } => *span,
+            Expr::App { span, .. } => *span,
+            Expr::IfExpr { span, .. } => *span,
+            Expr::TypeIdent(TypeIdent { span, .. }) => *span,
         }
     }
 }
@@ -214,7 +219,7 @@ pub trait Visitor<'ast>: Sized {
         for s in &program.structs {
             self.visit_struct_def(s)?;
         }
-        self.visit_expr(&program.expr)
+        self.visit_expr(program.expr)
     }
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> Result<(), Self::Err> {
@@ -262,10 +267,10 @@ pub trait Visitor<'ast>: Sized {
         }
     }
 
-    fn visit_ident(&mut self, ident: &'ast Ident) -> Result<(), Self::Err>;
+    fn visit_ident(&mut self, ident: &'ast Ident<'ast>) -> Result<(), Self::Err>;
     fn visit_bind(&mut self, bind: &'ast Binding<'ast>) -> Result<(), Self::Err>;
     fn visit_num(&mut self, num: &'ast Num) -> Result<(), Self::Err>;
-    fn visit_str(&mut self, str: &'ast Str) -> Result<(), Self::Err>;
+    fn visit_str(&mut self, str: &'ast Str<'ast>) -> Result<(), Self::Err>;
     fn visit_bool(&mut self, b: bool) -> Result<(), Self::Err>;
     fn visit_unary_op(
         &mut self,
@@ -280,7 +285,7 @@ pub trait Visitor<'ast>: Sized {
     ) -> Result<(), Self::Err>;
     fn visit_struct_expr(
         &mut self,
-        type_name: &'ast TypeIdent,
+        type_name: &'ast TypeIdent<'ast>,
         fields: &'ast [Binding<'ast>],
     ) -> Result<(), Self::Err>;
     fn visit_struct_def(&mut self, struct_def: &'ast StructDef<'ast>) -> Result<(), Self::Err>;
@@ -299,7 +304,7 @@ pub trait Visitor<'ast>: Sized {
     fn visit_struct_access(
         &mut self,
         expr: &'ast Expr<'ast>,
-        ident: &'ast Ident,
+        ident: &'ast Ident<'ast>,
     ) -> Result<(), Self::Err>;
     fn visit_if_expr(
         &mut self,

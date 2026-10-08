@@ -1,6 +1,7 @@
-use logos::{Lexer, Logos, Span, SpannedIter};
+use crate::span::Span;
+use logos::{Lexer, Logos, SpannedIter};
 
-#[derive(Logos, Clone, Debug, PartialEq)]
+#[derive(Logos, Clone, Copy, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\f]+")]
 pub enum TokenKind {
     #[token("=")]
@@ -87,7 +88,7 @@ pub enum TokenKind {
     None,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
@@ -103,7 +104,7 @@ impl Token {
 
     pub const NONE: Self = Self {
         kind: TokenKind::None,
-        span: 0..0,
+        span: Span::new(0, 0),
     };
 }
 

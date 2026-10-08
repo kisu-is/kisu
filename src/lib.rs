@@ -6,6 +6,7 @@ pub mod lexer;
 pub mod parser;
 #[cfg(feature = "serde")]
 pub mod serialize;
+pub mod span;
 pub mod target;
 pub mod types;
 
@@ -54,7 +55,7 @@ pub fn eval(source: &str) -> Result<Value, Error> {
     let typed_ast = {
         use crate::ast::untyped::Visitor;
         use crate::types::TypeChecker;
-        let mut checker = TypeChecker::default();
+        let mut checker = TypeChecker::new(&bump);
         checker.visit_program(&ast)?;
         checker.consume()?
     };
@@ -62,7 +63,7 @@ pub fn eval(source: &str) -> Result<Value, Error> {
     let result = unsafe {
         use crate::ast::typed::Visitor;
         use crate::target::eval::TreeWalker;
-        let mut walker = TreeWalker::default();
+        let mut walker = TreeWalker::new(&typed_ast.types, &bump);
         walker.visit_program(&typed_ast);
         walker.consume()
     };
@@ -101,7 +102,7 @@ pub fn eval_with_native_functions(
     let typed_ast = {
         use crate::ast::untyped::Visitor;
         use crate::types::TypeChecker;
-        let mut checker = TypeChecker::new_with_native(native_types);
+        let mut checker = TypeChecker::new_with_native(&bump, native_types);
         checker.visit_program(&ast)?;
         checker.consume()?
     };
@@ -114,7 +115,7 @@ pub fn eval_with_native_functions(
     let result = unsafe {
         use crate::ast::typed::Visitor;
         use crate::target::eval::TreeWalker;
-        let mut walker = TreeWalker::new(native_fns);
+        let mut walker = TreeWalker::with_bindings(&typed_ast.types, &bump, native_fns);
         walker.visit_program(&typed_ast);
         walker.consume()
     };
