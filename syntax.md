@@ -4,15 +4,16 @@ number = r/[0-9]+(\.[0-9]+)?/ ;
 string = r/"([^"\\]|\\.)*"/ ;
 bool = "true" | "false" ;
 literal = number | string | bool ;
-key = ident | string;
 
-program = type_def* block ;
+program = struct_def* seq ;
 
 type_ident = r/[A-Z][a-zA-Z0-9_]*/ ;
+
 struct_field = ident ":" type_expr ;
 struct_fields = struct_field ("," struct_field)* ;
 struct_body = "{" struct_fields? "}" ;
-struct_expr = type_ident "{" assign* "}" ;
+field = ident constraint? ("=" expr)? ;
+struct_expr = type_ident "{" (field (";" field)* ";"?)? "}" ;
 struct_def = "struct" type_ident struct_body ;
 
 list_type = "[" type_expr "]" ;
@@ -28,7 +29,7 @@ type_expr = "(" type_expr ")"
 expr = ident
      | literal
      | lambda
-     | block
+     | group
      | struct_expr
      | list
      | unary
@@ -38,13 +39,19 @@ expr = ident
 
 if_expr = "if" expr "then" expr "else" expr ;
 
-lambda_param = key constraint? ("=" expr)? ;
-lambda = "|" (lambda_param ("," lambda_param)*)? "|" ":" expr ;
+lambda_param = ident constraint? ("=" expr)? ;
+lambda = "|" (lambda_param ("," lambda_param)*)? "|" ":" seq ;
 
-assign = key constraint? "=" expr ";"
-       | key constraint? ";" ; // inherit
+decl = "let" ident constraint? "=" expr ;
+assign = ident "=" expr ;
 
-block = "(" ("rec"? assign)* expr ")" ;
+stmt = decl
+     | assign
+     | expr ;
+
+seq = (stmt ";")* expr? ;
+
+group = "(" seq ")" ;
 
 list = "[" expr ("," expr)* "]" ;
 

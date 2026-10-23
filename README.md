@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-Lazy purely functional configuration language
+Experimental lazy purely functional configuration language
 </p>
 
 Current syntax example:
