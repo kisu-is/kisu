@@ -430,11 +430,11 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
                 expr,
             });
 
-            if self.check_consume(&TokenKind::Semicolon).is_none()
+            if self.check_consume(&TokenKind::Comma).is_none()
                 && !self.check(&TokenKind::BraceR)
             {
                 return Err(Error::UnexpectedToken {
-                    expected: TokenKind::Semicolon,
+                    expected: TokenKind::Comma,
                     found: self.token_kind(),
                     span: self.token_span().into(),
                 });

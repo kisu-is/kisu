@@ -90,8 +90,8 @@ fn structs() {
         "
         struct Test { a: Number, b: Number, }
         Test {
-            a = 10;
-            b = 20;
+            a = 10,
+            b = 20,
         }",
         Value::Struct(Rc::new("Test".to_string()), Rc::new(expected))
     );
@@ -103,7 +103,7 @@ fn struct_access() {
         "
         struct Test { a: Number, }
         (
-            let map = Test { a = 5; };
+            let map = Test { a = 5 };
             map.a
         )",
         Value::Number(5.0)
@@ -121,8 +121,8 @@ fn inherit() {
         struct Test { x: String, y: Number, }
         let y = 10;
         Test {
-            x = "hello";
-            y;
+            x = "hello",
+            y
         }"#,
         Value::Struct(Rc::new("Test".to_string()), Rc::new(map))
     );

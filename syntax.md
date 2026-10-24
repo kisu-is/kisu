@@ -13,7 +13,7 @@ struct_field = ident ":" type_expr ;
 struct_fields = struct_field ("," struct_field)* ;
 struct_body = "{" struct_fields? "}" ;
 field = ident constraint? ("=" expr)? ;
-struct_expr = type_ident "{" (field (";" field)* ";"?)? "}" ;
+struct_expr = type_ident "{" (field ("," field)* ","?)? "}" ;
 struct_def = "struct" type_ident struct_body ;
 
 list_type = "[" type_expr "]" ;

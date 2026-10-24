@@ -22,13 +22,13 @@ struct Package {
 }
 
 let mk_dep = |name, version|: Dependency {
-  name;
-  version;
+  name,
+  version,
 };
 
 Package {
-  name = "mauve";
-  edition = "2024";
+  name = "mauve",
+  edition = "2024",
 
   dependencies = [
     mk_dep "logos" "*",
