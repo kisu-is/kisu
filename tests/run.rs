@@ -62,7 +62,7 @@ fn group_with_binding() {
     assert_eval!(
         "
         (
-            a = 10;
+            let a = 10;
             a * 2
         )",
         Value::Number(20.0)
@@ -73,7 +73,7 @@ fn group_with_binding() {
 fn group_top_level() {
     assert_eval!(
         "
-            a = 5;
+            let a = 5;
             a * 2
         ",
         Value::Number(10.0)
@@ -103,7 +103,7 @@ fn struct_access() {
         "
         struct Test { a: Number, }
         (
-            map = Test { a = 5; };
+            let map = Test { a = 5; };
             map.a
         )",
         Value::Number(5.0)
@@ -119,7 +119,7 @@ fn inherit() {
     assert_eval!(
         r#"
         struct Test { x: String, y: Number, }
-        y = 10;
+        let y = 10;
         Test {
             x = "hello";
             y;
@@ -133,7 +133,7 @@ fn lambda() {
     assert_eval!(
         "
         (
-            add = |l,r|: l + r;
+            let add = |l,r|: l + r;
             add 2 3
         )",
         Value::Number(5.0)
@@ -145,7 +145,7 @@ fn lambda_currying() {
     assert_eval!(
         "
         (
-            add = |l|: |r|: l + r;
+            let add = |l|: |r|: l + r;
             add 2 3
         )",
         Value::Number(5.0)
@@ -187,7 +187,7 @@ fn if_expr_nested() {
 fn type_constraint() {
     assert_eval!(
         "
-            x: Number = 10.0;
+            let x: Number = 10.0;
             x
         ",
         Value::Number(10.0)
@@ -198,7 +198,7 @@ fn type_constraint() {
 fn type_constraint_lambda() {
     assert_eval!(
         "
-            f: fn Number Number -> Number = |x, y|: x + y + 1;
+            let f: fn Number Number -> Number = |x, y|: x + y + 1;
             f 1 2
         ",
         Value::Number(4.0)
@@ -209,9 +209,21 @@ fn type_constraint_lambda() {
 fn type_constraint_paren() {
     assert_eval!(
         "
-            f: fn Number -> (fn Number -> Number) = |x, y|: x + y + 1;
+            let f: fn Number -> (fn Number -> Number) = |x, y|: x + y + 1;
             f 1 2
         ",
         Value::Number(4.0)
+    );
+}
+
+#[test]
+fn assign() {
+    assert_eval!(
+        "
+            let a = 5;
+            a = a + 1;
+            a * 2
+        ",
+        Value::Number(12.0)
     );
 }

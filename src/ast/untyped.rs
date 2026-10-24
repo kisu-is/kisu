@@ -40,6 +40,28 @@ impl<'ast> Binding<'ast> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assign<'ast> {
+    pub ident: Ident<'ast>,
+    pub expr: &'ast Expr<'ast>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt<'ast> {
+    Bind(Binding<'ast>),
+    Assign(Assign<'ast>),
+}
+
+impl Stmt<'_> {
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::Bind(binding) => binding.span,
+            Stmt::Assign(assign) => assign.span,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindingKind {
     Normal,
@@ -115,8 +137,8 @@ pub enum Expr<'ast> {
         body: &'ast Expr<'ast>,
         span: Span,
     },
-    Block {
-        bindings: Vec<'ast, Binding<'ast>>,
+    Seq {
+        stmts: Vec<'ast, Stmt<'ast>>,
         expr: &'ast Expr<'ast>,
         span: Span,
     },
@@ -150,7 +172,7 @@ impl<'ast> Expr<'ast> {
             Expr::Binary { span, .. } => *span,
             Expr::StructAccess { span, .. } => *span,
             Expr::Lambda { span, .. } => *span,
-            Expr::Block { span, .. } => *span,
+            Expr::Seq { span, .. } => *span,
             Expr::Struct { span, .. } => *span,
             Expr::App { span, .. } => *span,
             Expr::IfExpr { span, .. } => *span,
@@ -239,11 +261,11 @@ pub trait Visitor<'ast>: Sized {
                 body,
                 span: _,
             } => self.visit_lambda(params, body),
-            Expr::Block {
-                bindings,
+            Expr::Seq {
+                stmts,
                 expr,
                 span: _,
-            } => self.visit_block_expr(bindings, expr),
+            } => self.visit_seq(stmts, expr),
             Expr::Struct {
                 type_name,
                 fields,
@@ -269,6 +291,7 @@ pub trait Visitor<'ast>: Sized {
 
     fn visit_ident(&mut self, ident: &'ast Ident<'ast>) -> Result<(), Self::Err>;
     fn visit_bind(&mut self, bind: &'ast Binding<'ast>) -> Result<(), Self::Err>;
+    fn visit_assign(&mut self, assign: &'ast Assign<'ast>) -> Result<(), Self::Err>;
     fn visit_num(&mut self, num: &'ast Num) -> Result<(), Self::Err>;
     fn visit_str(&mut self, str: &'ast Str<'ast>) -> Result<(), Self::Err>;
     fn visit_bool(&mut self, b: bool) -> Result<(), Self::Err>;
@@ -289,9 +312,9 @@ pub trait Visitor<'ast>: Sized {
         fields: &'ast [Binding<'ast>],
     ) -> Result<(), Self::Err>;
     fn visit_struct_def(&mut self, struct_def: &'ast StructDef<'ast>) -> Result<(), Self::Err>;
-    fn visit_block_expr(
+    fn visit_seq(
         &mut self,
-        bindings: &'ast [Binding<'ast>],
+        stmts: &'ast [Stmt<'ast>],
         expr: &'ast Expr<'ast>,
     ) -> Result<(), Self::Err>;
     fn visit_app(&mut self, lhs: &'ast Expr<'ast>, rhs: &'ast Expr<'ast>) -> Result<(), Self::Err>;

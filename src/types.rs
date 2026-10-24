@@ -1,5 +1,5 @@
 use crate::ast::untyped::{
-    BinaryOp, Binding, Expr, Ident, List, Num, Param, Program, Str, UnaryOp, Visitor,
+    Assign, BinaryOp, Binding, Expr, Ident, List, Num, Param, Program, Stmt, Str, UnaryOp, Visitor,
 };
 use crate::ast::{typed, untyped};
 use crate::span::Span;
@@ -518,6 +518,40 @@ impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
         Ok(())
     }
 
+    fn visit_assign(&mut self, assign: &'ast Assign<'ast>) -> Result<(), Self::Err> {
+        let Some(scheme) = self.scope.get(assign.ident.name) else {
+            return Err(Error::UndefinedIdent {
+                name: assign.ident.name.to_string(),
+                span: assign.ident.span.into(),
+            });
+        };
+
+        self.level += 1;
+        self.visit_expr(assign.expr)?;
+        let expr = self.take_expr();
+        self.level -= 1;
+
+        let declared = self.instantiate(scheme);
+        let ty = self.unify(expr.ty, declared, assign.ident.span)?;
+
+        let scheme = self.generalize(ty);
+        self.scope.extend(assign.ident.name, scheme);
+
+        self.last_binding = Some(typed::Binding {
+            kind: typed::BindingKind::Normal,
+            ident: typed::Ident {
+                name: assign.ident.name,
+                span: assign.ident.span,
+                ty,
+            },
+            expr: self.bump.alloc(expr),
+            span: assign.span,
+            ty,
+        });
+
+        Ok(())
+    }
+
     fn visit_num(&mut self, num: &'ast Num) -> Result<(), Self::Err> {
         self.set_expr(
             typed::ExprKind::Number(typed::Num(num.0, num.1, Types::NUMBER)),
@@ -740,16 +774,19 @@ impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
         Ok(())
     }
 
-    fn visit_block_expr(
+    fn visit_seq(
         &mut self,
-        bindings: &'ast [Binding<'ast>],
+        stmts: &'ast [Stmt<'ast>],
         expr: &'ast Expr<'ast>,
     ) -> Result<(), Self::Err> {
         let mark = self.scope.mark();
-        let mut ty_bindings = BumpVec::with_capacity_in(bindings.len(), self.bump);
+        let mut ty_bindings = BumpVec::with_capacity_in(stmts.len(), self.bump);
 
-        for bind in bindings {
-            self.visit_bind(bind)?;
+        for stmt in stmts {
+            match stmt {
+                Stmt::Bind(bind) => self.visit_bind(bind)?,
+                Stmt::Assign(assign) => self.visit_assign(assign)?,
+            }
             ty_bindings.push(self.last_binding.take().unwrap());
         }
 
@@ -758,13 +795,13 @@ impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
         let ty_expr = self.alloc_expr();
 
         self.set_expr(
-            typed::ExprKind::Block {
+            typed::ExprKind::Seq {
                 bindings: ty_bindings.into_bump_slice(),
                 expr: ty_expr,
             },
-            bindings
+            stmts
                 .first()
-                .map_or(expr.span(), |b| b.span)
+                .map_or(expr.span(), |s| s.span())
                 .to(expr.span()),
             ty_expr.ty,
         );

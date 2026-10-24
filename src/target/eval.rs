@@ -474,7 +474,7 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker<'_, 'ast> {
         }
     }
 
-    unsafe fn visit_block_expr(
+    unsafe fn visit_seq(
         &mut self,
         bindings: &'ast [typed::Binding<'ast>],
         expr: &'ast typed::Expr<'ast>,

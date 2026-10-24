@@ -42,10 +42,10 @@ if_expr = "if" expr "then" expr "else" expr ;
 lambda_param = ident constraint? ("=" expr)? ;
 lambda = "|" (lambda_param ("," lambda_param)*)? "|" ":" seq ;
 
-decl = "let" ident constraint? "=" expr ;
+bind = "let" ident constraint? "=" expr ;
 assign = ident "=" expr ;
 
-stmt = decl
+stmt = bind
      | assign
      | expr ;
 

@@ -25,7 +25,7 @@ struct Package {
   dependencies: [Dependency],
 }
 
-mk_dep = |name, version|: Dependency {
+let mk_dep = |name, version|: Dependency {
   name;
   version;
 };

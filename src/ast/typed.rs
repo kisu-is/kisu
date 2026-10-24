@@ -123,7 +123,7 @@ pub enum ExprKind<'ast> {
         params: &'ast [Param<'ast>],
         body: &'ast Expr<'ast>,
     },
-    Block {
+    Seq {
         bindings: &'ast [Binding<'ast>],
         expr: &'ast Expr<'ast>,
     },
@@ -165,7 +165,7 @@ pub trait Visitor<'ast>: Sized {
                 ExprKind::Binary { op, lhs, rhs, ty } => self.visit_binary_op(op, lhs, rhs, ty),
                 ExprKind::StructAccess { expr, ident } => self.visit_struct_access(expr, ident),
                 ExprKind::Lambda { params, body } => self.visit_lambda(params, body),
-                ExprKind::Block { bindings, expr } => self.visit_block_expr(bindings, expr),
+                ExprKind::Seq { bindings, expr } => self.visit_seq(bindings, expr),
                 ExprKind::Struct { name, fields } => self.visit_struct_expr(fields, name),
                 ExprKind::App { lhs, rhs } => self.visit_app(lhs, rhs),
                 ExprKind::IfExpr {
@@ -192,7 +192,7 @@ pub trait Visitor<'ast>: Sized {
     );
     unsafe fn visit_struct_access(&mut self, expr: &'ast Expr<'ast>, ident: &'ast Ident<'ast>);
     unsafe fn visit_lambda(&mut self, params: &'ast [Param<'ast>], body: &'ast Expr<'ast>);
-    unsafe fn visit_block_expr(&mut self, bindings: &'ast [Binding<'ast>], expr: &'ast Expr<'ast>);
+    unsafe fn visit_seq(&mut self, bindings: &'ast [Binding<'ast>], expr: &'ast Expr<'ast>);
     unsafe fn visit_struct_expr(
         &mut self,
         fields: &'ast [Binding<'ast>],

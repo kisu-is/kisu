@@ -1,4 +1,6 @@
-use crate::ast::untyped::{self, BinaryOp, Binding, Expr, Ident, List, Num, Param, Str, UnaryOp};
+use crate::ast::untyped::{
+    self, Assign, BinaryOp, Binding, Expr, Ident, List, Num, Param, Stmt, Str, UnaryOp,
+};
 use crate::lexer::{Token, TokenIter, TokenKind};
 use crate::span::Span;
 use crate::types::Type;
@@ -327,55 +329,69 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         Ok(Some(self.type_expr()?))
     }
 
+    fn bind(&mut self) -> Result<Binding<'ast>, Error> {
+        let start = self.expect(TokenKind::Let)?.span;
+
+        let kind = if let Some(rec) = self.check_consume(&TokenKind::Rec) {
+            if cfg!(feature = "terminating") {
+                return Err(Error::NotTerminating {
+                    found: rec.kind,
+                    span: rec.span.into(),
+                });
+            };
+            untyped::BindingKind::Rec
+        } else {
+            untyped::BindingKind::Normal
+        };
+
+        let ident = self.ident()?;
+        let constraint = self.constraint()?;
+        self.expect(TokenKind::Assign)?;
+        let expr = self.expr()?;
+
+        Ok(Binding {
+            kind,
+            ident,
+            constraint,
+            expr,
+            span: start.to(expr.span()),
+        })
+    }
+
+    fn assign(&mut self) -> Result<Assign<'ast>, Error> {
+        let ident = self.ident()?;
+        self.expect(TokenKind::Assign)?;
+        let expr = self.expr()?;
+
+        Ok(Assign {
+            ident,
+            expr,
+            span: ident.span.to(expr.span()),
+        })
+    }
+
     fn seq(&mut self) -> Result<&'ast Expr<'ast>, Error> {
         let start = self.current().span.start;
-        let mut bindings = Vec::new_in(self.bump);
+        let mut stmts = Vec::new_in(self.bump);
 
-        while {
-            let is_normal = self.check(&TokenKind::Ident)
-                && (self.check_next(&TokenKind::Assign) || self.check_next(&TokenKind::Colon));
-
-            let is_rec = self.check(&TokenKind::Rec);
-
-            is_normal || is_rec
-        } {
-            let kind = if let Some(rec) = self.check_consume(&TokenKind::Rec) {
-                if cfg!(feature = "terminating") {
-                    return Err(Error::NotTerminating {
-                        found: rec.kind,
-                        span: rec.span.into(),
-                    });
-                };
-                untyped::BindingKind::Rec
+        loop {
+            let stmt = if self.check(&TokenKind::Let) {
+                Stmt::Bind(self.bind()?)
+            } else if self.check(&TokenKind::Ident) && self.check_next(&TokenKind::Assign) {
+                Stmt::Assign(self.assign()?)
             } else {
-                untyped::BindingKind::Normal
+                break;
             };
 
-            let ident = self.ident()?;
-            let constraint = self.constraint()?;
-
-            let expr = if self.check_consume(&TokenKind::Assign).is_some() {
-                self.expr()?
-            } else {
-                self.bump.alloc(Expr::Ident(ident))
-            };
-
-            let span = ident.span.to(self.expect(TokenKind::Semicolon)?.span);
-
-            bindings.push(Binding {
-                kind,
-                ident,
-                constraint,
-                expr,
-                span,
-            });
+            self.expect(TokenKind::Semicolon)?;
+            stmts.push(stmt);
         }
 
         let expr_result = self.expr()?;
         let end = expr_result.span().end;
 
-        Ok(self.bump.alloc(Expr::Block {
-            bindings,
+        Ok(self.bump.alloc(Expr::Seq {
+            stmts,
             expr: expr_result,
             span: Span::new(start, end),
         }))
