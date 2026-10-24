@@ -1,5 +1,5 @@
 use crate::ast::untyped::{
-    self, Assign, BinaryOp, Binding, Expr, Ident, List, Num, Param, Stmt, Str, UnaryOp,
+    self, Assign, BinaryOp, Bind, Expr, Ident, List, Num, Param, Stmt, Str, UnaryOp,
 };
 use crate::lexer::{Token, TokenIter, TokenKind};
 use crate::span::Span;
@@ -329,7 +329,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         Ok(Some(self.type_expr()?))
     }
 
-    fn bind(&mut self) -> Result<Binding<'ast>, Error> {
+    fn bind(&mut self) -> Result<Bind<'ast>, Error> {
         let start = self.expect(TokenKind::Let)?.span;
 
         let kind = if let Some(rec) = self.check_consume(&TokenKind::Rec) {
@@ -349,7 +349,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         self.expect(TokenKind::Assign)?;
         let expr = self.expr()?;
 
-        Ok(Binding {
+        Ok(Bind {
             kind,
             ident,
             constraint,
@@ -422,7 +422,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
                 self.bump.alloc(Expr::Ident(ident))
             };
 
-            fields.push(untyped::Binding {
+            fields.push(untyped::Bind {
                 kind: untyped::BindingKind::Normal,
                 span: ident.span.to(expr.span()),
                 constraint,

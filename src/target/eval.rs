@@ -263,7 +263,7 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker<'_, 'ast> {
         }
     }
 
-    unsafe fn visit_bind(&mut self, bind: &'ast typed::Binding<'ast>) {
+    unsafe fn visit_bind(&mut self, bind: &'ast typed::Bind<'ast>) {
         let scope = self.scope().clone();
 
         if bind.kind == typed::BindingKind::Rec {
@@ -404,7 +404,7 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker<'_, 'ast> {
 
     unsafe fn visit_struct_expr(
         &mut self,
-        fields: &'ast [typed::Binding<'ast>],
+        fields: &'ast [typed::Bind<'ast>],
         name: &'ast typed::TypeIdent<'ast>,
     ) {
         unsafe {
@@ -476,7 +476,7 @@ impl<'ast> typed::Visitor<'ast> for TreeWalker<'_, 'ast> {
 
     unsafe fn visit_seq(
         &mut self,
-        bindings: &'ast [typed::Binding<'ast>],
+        bindings: &'ast [typed::Bind<'ast>],
         expr: &'ast typed::Expr<'ast>,
     ) {
         unsafe {

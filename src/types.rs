@@ -1,5 +1,5 @@
 use crate::ast::untyped::{
-    Assign, BinaryOp, Binding, Expr, Ident, List, Num, Param, Program, Stmt, Str, UnaryOp, Visitor,
+    Assign, BinaryOp, Bind, Expr, Ident, List, Num, Param, Program, Stmt, Str, UnaryOp, Visitor,
 };
 use crate::ast::{typed, untyped};
 use crate::span::Span;
@@ -279,7 +279,7 @@ pub struct TypeChecker<'ast> {
     structs: &'ast [typed::StructDef<'ast>],
     level: u32,
     last_expr: Option<typed::Expr<'ast>>,
-    last_binding: Option<typed::Binding<'ast>>,
+    last_binding: Option<typed::Bind<'ast>>,
 }
 
 impl<'ast> TypeChecker<'ast> {
@@ -470,7 +470,7 @@ impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
         Ok(())
     }
 
-    fn visit_bind(&mut self, bind: &'ast untyped::Binding<'ast>) -> Result<(), Self::Err> {
+    fn visit_bind(&mut self, bind: &'ast untyped::Bind<'ast>) -> Result<(), Self::Err> {
         self.level += 1;
 
         let expr = if bind.kind == untyped::BindingKind::Rec {
@@ -500,7 +500,7 @@ impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
         let scheme = self.generalize(ty);
         self.scope.extend(bind.ident.name, scheme);
 
-        self.last_binding = Some(typed::Binding {
+        self.last_binding = Some(typed::Bind {
             kind: match bind.kind {
                 untyped::BindingKind::Normal => typed::BindingKind::Normal,
                 untyped::BindingKind::Rec => typed::BindingKind::Rec,
@@ -537,7 +537,7 @@ impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
         let scheme = self.generalize(ty);
         self.scope.extend(assign.ident.name, scheme);
 
-        self.last_binding = Some(typed::Binding {
+        self.last_binding = Some(typed::Bind {
             kind: typed::BindingKind::Normal,
             ident: typed::Ident {
                 name: assign.ident.name,
@@ -673,7 +673,7 @@ impl<'ast> Visitor<'ast> for TypeChecker<'ast> {
     fn visit_struct_expr(
         &mut self,
         type_name: &'ast untyped::TypeIdent<'ast>,
-        fields: &'ast [Binding<'ast>],
+        fields: &'ast [Bind<'ast>],
     ) -> Result<(), Self::Err> {
         let Some(struct_def) = self.struct_defs.get(type_name.name).copied() else {
             return Err(Error::UnknownType {

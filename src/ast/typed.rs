@@ -59,7 +59,7 @@ pub struct StructDef<'ast> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Binding<'ast> {
+pub struct Bind<'ast> {
     pub kind: BindingKind,
     pub ident: Ident<'ast>,
     pub expr: &'ast Expr<'ast>,
@@ -124,12 +124,12 @@ pub enum ExprKind<'ast> {
         body: &'ast Expr<'ast>,
     },
     Seq {
-        bindings: &'ast [Binding<'ast>],
+        bindings: &'ast [Bind<'ast>],
         expr: &'ast Expr<'ast>,
     },
     Struct {
         name: TypeIdent<'ast>,
-        fields: &'ast [Binding<'ast>],
+        fields: &'ast [Bind<'ast>],
     },
     App {
         lhs: &'ast Expr<'ast>,
@@ -192,12 +192,8 @@ pub trait Visitor<'ast>: Sized {
     );
     unsafe fn visit_struct_access(&mut self, expr: &'ast Expr<'ast>, ident: &'ast Ident<'ast>);
     unsafe fn visit_lambda(&mut self, params: &'ast [Param<'ast>], body: &'ast Expr<'ast>);
-    unsafe fn visit_seq(&mut self, bindings: &'ast [Binding<'ast>], expr: &'ast Expr<'ast>);
-    unsafe fn visit_struct_expr(
-        &mut self,
-        fields: &'ast [Binding<'ast>],
-        name: &'ast TypeIdent<'ast>,
-    );
+    unsafe fn visit_seq(&mut self, bindings: &'ast [Bind<'ast>], expr: &'ast Expr<'ast>);
+    unsafe fn visit_struct_expr(&mut self, fields: &'ast [Bind<'ast>], name: &'ast TypeIdent<'ast>);
     unsafe fn visit_app(&mut self, lhs: &'ast Expr<'ast>, rhs: &'ast Expr<'ast>);
     unsafe fn visit_if_expr(
         &mut self,
@@ -205,6 +201,6 @@ pub trait Visitor<'ast>: Sized {
         then_expr: &'ast Expr<'ast>,
         else_expr: &'ast Expr<'ast>,
     );
-    unsafe fn visit_bind(&mut self, bind: &'ast Binding<'ast>);
+    unsafe fn visit_bind(&mut self, bind: &'ast Bind<'ast>);
     unsafe fn visit_struct_def(&mut self, struct_def: &'ast StructDef<'ast>);
 }

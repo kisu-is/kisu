@@ -15,7 +15,7 @@ pub struct TypeIdent<'ast> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Binding<'ast> {
+pub struct Bind<'ast> {
     pub kind: BindingKind,
     pub ident: Ident<'ast>,
     pub constraint: Option<Type>,
@@ -23,7 +23,7 @@ pub struct Binding<'ast> {
     pub span: Span,
 }
 
-impl<'ast> Binding<'ast> {
+impl<'ast> Bind<'ast> {
     pub fn new(
         ident: Ident<'ast>,
         constraint: Option<Type>,
@@ -49,7 +49,7 @@ pub struct Assign<'ast> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt<'ast> {
-    Bind(Binding<'ast>),
+    Bind(Bind<'ast>),
     Assign(Assign<'ast>),
 }
 
@@ -144,7 +144,7 @@ pub enum Expr<'ast> {
     },
     Struct {
         type_name: TypeIdent<'ast>,
-        fields: Vec<'ast, Binding<'ast>>,
+        fields: Vec<'ast, Bind<'ast>>,
         span: Span,
     },
     App {
@@ -290,7 +290,7 @@ pub trait Visitor<'ast>: Sized {
     }
 
     fn visit_ident(&mut self, ident: &'ast Ident<'ast>) -> Result<(), Self::Err>;
-    fn visit_bind(&mut self, bind: &'ast Binding<'ast>) -> Result<(), Self::Err>;
+    fn visit_bind(&mut self, bind: &'ast Bind<'ast>) -> Result<(), Self::Err>;
     fn visit_assign(&mut self, assign: &'ast Assign<'ast>) -> Result<(), Self::Err>;
     fn visit_num(&mut self, num: &'ast Num) -> Result<(), Self::Err>;
     fn visit_str(&mut self, str: &'ast Str<'ast>) -> Result<(), Self::Err>;
@@ -309,7 +309,7 @@ pub trait Visitor<'ast>: Sized {
     fn visit_struct_expr(
         &mut self,
         type_name: &'ast TypeIdent<'ast>,
-        fields: &'ast [Binding<'ast>],
+        fields: &'ast [Bind<'ast>],
     ) -> Result<(), Self::Err>;
     fn visit_struct_def(&mut self, struct_def: &'ast StructDef<'ast>) -> Result<(), Self::Err>;
     fn visit_seq(
