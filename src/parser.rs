@@ -5,66 +5,59 @@ use crate::types::Type;
 use bumpalo::Bump;
 use bumpalo::collections::Vec;
 
-pub use _hide_warnings::*;
+use miette::{Diagnostic, SourceSpan};
 
-mod _hide_warnings {
-    #![allow(unused_assignments)]
-
-    use crate::lexer::TokenKind;
-    use miette::{Diagnostic, SourceSpan};
-
-    #[derive(thiserror::Error, Diagnostic, Debug)]
-    #[diagnostic(code(kisu::parser))]
-    pub enum Error {
-        #[error("unexpected token (expected {expected:?}, found {found:?})")]
-        UnexpectedToken {
-            expected: TokenKind,
-            found: TokenKind,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("expected number, found {found:?}")]
-        ExpectedNumber {
-            found: TokenKind,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("expected string, found {found:?}")]
-        ExpectedString {
-            found: TokenKind,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("expected identifier, found {found:?}")]
-        ExpectedIdentifier {
-            found: TokenKind,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("invalid number")]
-        InvalidNumber {
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("expected EOF, found {found:?}")]
-        ExpectedEof {
-            found: TokenKind,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("expected expression, found {found:?}")]
-        ExpectedExpr {
-            found: TokenKind,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("{found:?} not allowed when 'terminating' feature is enabled")]
-        NotTerminating {
-            found: TokenKind,
-            #[label]
-            span: SourceSpan,
-        },
-    }
+#[derive(thiserror::Error, Diagnostic, Debug)]
+#[diagnostic(code(kisu::parser))]
+pub enum Error {
+    #[error("unexpected token (expected {expected:?}, found {found:?})")]
+    UnexpectedToken {
+        expected: TokenKind,
+        found: TokenKind,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("expected number, found {found:?}")]
+    ExpectedNumber {
+        found: TokenKind,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("expected string, found {found:?}")]
+    ExpectedString {
+        found: TokenKind,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("expected identifier, found {found:?}")]
+    ExpectedIdentifier {
+        found: TokenKind,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("invalid number")]
+    InvalidNumber {
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("expected EOF, found {found:?}")]
+    ExpectedEof {
+        found: TokenKind,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("expected expression, found {found:?}")]
+    ExpectedExpr {
+        found: TokenKind,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("{found:?} not allowed when 'terminating' feature is enabled")]
+    NotTerminating {
+        found: TokenKind,
+        #[label]
+        span: SourceSpan,
+    },
 }
 
 #[derive(Clone)]

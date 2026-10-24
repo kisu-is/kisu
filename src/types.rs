@@ -35,46 +35,41 @@ impl fmt::Display for Type {
     }
 }
 
-pub use _hide_warnings::*;
-mod _hide_warnings {
-    #![allow(unused_assignments)]
+use miette::{Diagnostic, SourceSpan};
+use thiserror::Error;
 
-    use miette::{Diagnostic, SourceSpan};
-    use thiserror::Error;
-
-    #[derive(Debug, PartialEq, Error, Diagnostic)]
-    pub enum Error {
-        #[error("Unexpected type: {t1} != {t2}")]
-        UnexpectedType {
-            t1: String,
-            t2: String,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("Infinite type")]
-        InfiniteType {
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("Identifier {name} is undefined")]
-        UndefinedIdent {
-            name: String,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("Unknown type: {name}")]
-        UnknownType {
-            name: String,
-            #[label]
-            span: SourceSpan,
-        },
-        #[error("Duplicate struct definition: {name}")]
-        DuplicateDef {
-            name: String,
-            #[label]
-            span: SourceSpan,
-        },
-    }
+#[derive(Debug, PartialEq, Error, Diagnostic)]
+pub enum Error {
+    #[error("Unexpected type: {t1} != {t2}")]
+    UnexpectedType {
+        t1: String,
+        t2: String,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("Infinite type")]
+    InfiniteType {
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("Identifier {name} is undefined")]
+    UndefinedIdent {
+        name: String,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("Unknown type: {name}")]
+    UnknownType {
+        name: String,
+        #[label]
+        span: SourceSpan,
+    },
+    #[error("Duplicate struct definition: {name}")]
+    DuplicateDef {
+        name: String,
+        #[label]
+        span: SourceSpan,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
