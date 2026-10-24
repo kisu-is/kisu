@@ -89,7 +89,8 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         while self.check(&TokenKind::Struct) {
             structs.push(self.struct_def()?);
         }
-        let expr = self.group(true)?;
+
+        let expr = self.seq()?;
         self.expect_eof()?;
         Ok(untyped::Program { structs, expr })
     }
@@ -326,13 +327,8 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         Ok(Some(self.type_expr()?))
     }
 
-    fn group(&mut self, top_level: bool) -> Result<&'ast Expr<'ast>, Error> {
-        let mut start = self.current().span.start;
-
-        if !top_level {
-            start = self.expect(TokenKind::ParenL)?.span.end;
-        }
-
+    fn seq(&mut self) -> Result<&'ast Expr<'ast>, Error> {
+        let start = self.current().span.start;
         let mut bindings = Vec::new_in(self.bump);
 
         while {
@@ -376,17 +372,21 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         }
 
         let expr_result = self.expr()?;
-        let mut end = expr_result.span().end;
-
-        if !top_level {
-            end = self.expect(TokenKind::ParenR)?.span.end;
-        }
+        let end = expr_result.span().end;
 
         Ok(self.bump.alloc(Expr::Block {
             bindings,
             expr: expr_result,
             span: Span::new(start, end),
         }))
+    }
+
+    fn group(&mut self) -> Result<&'ast Expr<'ast>, Error> {
+        self.expect(TokenKind::ParenL)?;
+        let seq = self.seq()?;
+        self.expect(TokenKind::ParenR)?;
+
+        Ok(seq)
     }
 
     fn struct_expr(
@@ -458,7 +458,8 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
 
         self.expect(TokenKind::Pipe)?;
         self.expect(TokenKind::Colon)?;
-        let body = self.group(true)?;
+
+        let body = self.seq()?;
         let span = Span::new(start, body.span().end);
 
         Ok(self.bump.alloc(Expr::Lambda { params, body, span }))
@@ -512,7 +513,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
             }
             TokenKind::Ident => self.ident_expr(),
             TokenKind::BracketL => self.list(),
-            TokenKind::ParenL => self.group(false),
+            TokenKind::ParenL => self.group(),
             TokenKind::Pipe => self.lambda(),
             _ => Err(Error::UnexpectedToken {
                 expected: self.token_kind(),
