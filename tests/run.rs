@@ -48,7 +48,7 @@ fn complex() {
 }
 
 #[test]
-fn block() {
+fn group() {
     assert_eval!("(1 + 2) * 3", Value::Number(9.0));
 }
 
@@ -58,7 +58,7 @@ fn string() {
 }
 
 #[test]
-fn block_with_binding() {
+fn group_with_binding() {
     assert_eval!(
         "
         (
@@ -70,7 +70,7 @@ fn block_with_binding() {
 }
 
 #[test]
-fn block_top_level() {
+fn group_top_level() {
     assert_eval!(
         "
             a = 5;
@@ -111,23 +111,6 @@ fn struct_access() {
 }
 
 #[test]
-fn struct_string_key() {
-    let mut expected = HashMap::new();
-    expected.insert("a".to_string(), Value::Number(10.0));
-    expected.insert("b".to_string(), Value::Number(20.0));
-
-    assert_eval!(
-        r#"
-        struct Test { "a": Number, "b": Number, }
-        Test {
-            "a" = 10;
-            "b" = 20;
-        }"#,
-        Value::Struct(Rc::new("Test".to_string()), Rc::new(expected))
-    );
-}
-
-#[test]
 fn inherit() {
     let mut map = HashMap::new();
     map.insert("x".to_string(), Value::String(Rc::new("hello".to_string())));
@@ -142,39 +125,6 @@ fn inherit() {
             y;
         }"#,
         Value::Struct(Rc::new("Test".to_string()), Rc::new(map))
-    );
-}
-
-#[test]
-fn inherit_string_key() {
-    let mut map = HashMap::new();
-    let mut map2 = HashMap::new();
-    map2.insert(
-        "a b".to_string(),
-        Value::String(Rc::new("hello".to_string())),
-    );
-    map.insert(
-        "a b".to_string(),
-        Value::String(Rc::new("hello".to_string())),
-    );
-    map.insert(
-        "c".to_string(),
-        Value::Struct(Rc::new("Inner".to_string()), Rc::new(map2)),
-    );
-
-    assert_eval!(
-        r#"
-        struct Outer { "a b": String, c: Inner, }
-        struct Inner { "a b": String, }
-
-        "a b" = "hello";
-        Outer {
-            "a b";
-            c = Inner {
-                "a b";
-            };
-        }"#,
-        Value::Struct(Rc::new("Outer".to_string()), Rc::new(map))
     );
 }
 
@@ -199,18 +149,6 @@ fn lambda_currying() {
             add 2 3
         )",
         Value::Number(5.0)
-    );
-}
-
-#[test]
-fn lambda_string_param() {
-    assert_eval!(
-        r#"
-        (
-            add = |"l","r"|: l + r;
-            add 5 6
-        )"#,
-        Value::Number(11.0)
     );
 }
 

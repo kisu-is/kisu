@@ -89,7 +89,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         while self.check(&TokenKind::Struct) {
             structs.push(self.struct_def()?);
         }
-        let expr = self.block(true)?;
+        let expr = self.group(true)?;
         self.expect_eof()?;
         Ok(untyped::Program { structs, expr })
     }
@@ -302,10 +302,6 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         }
     }
 
-    fn check_key(&mut self) -> bool {
-        self.check(&TokenKind::Ident) || self.check(&TokenKind::String)
-    }
-
     fn if_expr(&mut self) -> Result<&'ast Expr<'ast>, Error> {
         let if_token = self.expect(TokenKind::If)?;
         let cond = self.expr()?;
@@ -322,22 +318,6 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         }))
     }
 
-    fn key(&mut self) -> Result<Ident<'ast>, Error> {
-        if let Ok(ident) = self.ident() {
-            Ok(ident)
-        } else if let Ok(Expr::String(str)) = self.string() {
-            Ok(Ident {
-                name: str.0,
-                span: str.1,
-            })
-        } else {
-            Err(Error::ExpectedIdentifier {
-                found: self.token_kind(),
-                span: self.token_span().into(),
-            })
-        }
-    }
-
     fn constraint(&mut self) -> Result<Option<Type>, Error> {
         if self.expect(TokenKind::Colon).is_err() {
             return Ok(None);
@@ -346,7 +326,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         Ok(Some(self.type_expr()?))
     }
 
-    fn block(&mut self, top_level: bool) -> Result<&'ast Expr<'ast>, Error> {
+    fn group(&mut self, top_level: bool) -> Result<&'ast Expr<'ast>, Error> {
         let mut start = self.current().span.start;
 
         if !top_level {
@@ -356,7 +336,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         let mut bindings = Vec::new_in(self.bump);
 
         while {
-            let is_normal = self.check_key()
+            let is_normal = self.check(&TokenKind::Ident)
                 && (self.check_next(&TokenKind::Assign) || self.check_next(&TokenKind::Colon));
 
             let is_rec = self.check(&TokenKind::Rec);
@@ -375,20 +355,20 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
                 untyped::BindingKind::Normal
             };
 
-            let key = self.key()?;
+            let ident = self.ident()?;
             let constraint = self.constraint()?;
 
             let expr = if self.check_consume(&TokenKind::Assign).is_some() {
                 self.expr()?
             } else {
-                self.bump.alloc(Expr::Ident(key))
+                self.bump.alloc(Expr::Ident(ident))
             };
 
-            let span = key.span.to(self.expect(TokenKind::Semicolon)?.span);
+            let span = ident.span.to(self.expect(TokenKind::Semicolon)?.span);
 
             bindings.push(Binding {
                 kind,
-                ident: key,
+                ident,
                 constraint,
                 expr,
                 span,
@@ -417,20 +397,20 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         let mut fields = Vec::new_in(self.bump);
 
         while !self.check(&TokenKind::BraceR) {
-            let key = self.key()?;
+            let ident = self.ident()?;
             let constraint = self.constraint()?;
 
             let expr = if self.check_consume(&TokenKind::Assign).is_some() {
                 self.expr()?
             } else {
-                self.bump.alloc(Expr::Ident(key))
+                self.bump.alloc(Expr::Ident(ident))
             };
 
             fields.push(untyped::Binding {
                 kind: untyped::BindingKind::Normal,
-                span: key.span.to(expr.span()),
+                span: ident.span.to(expr.span()),
                 constraint,
-                ident: key,
+                ident,
                 expr,
             });
 
@@ -460,13 +440,13 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
         let mut params = Vec::new_in(self.bump);
         if !self.check(&TokenKind::Pipe) {
             loop {
-                let key = self.key()?;
+                let ident = self.ident()?;
                 let constraint = self.constraint()?;
 
                 params.push(Param {
-                    span: key.span,
+                    span: ident.span,
                     constraint,
-                    ident: key,
+                    ident,
                     expr: None,
                 });
 
@@ -478,7 +458,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
 
         self.expect(TokenKind::Pipe)?;
         self.expect(TokenKind::Colon)?;
-        let body = self.block(true)?;
+        let body = self.group(true)?;
         let span = Span::new(start, body.span().end);
 
         Ok(self.bump.alloc(Expr::Lambda { params, body, span }))
@@ -532,7 +512,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
             }
             TokenKind::Ident => self.ident_expr(),
             TokenKind::BracketL => self.list(),
-            TokenKind::ParenL => self.block(false),
+            TokenKind::ParenL => self.group(false),
             TokenKind::Pipe => self.lambda(),
             _ => Err(Error::UnexpectedToken {
                 expected: self.token_kind(),
@@ -587,11 +567,11 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
             if let Some(op) = self.binary_op() {
                 self.consume();
                 if op == BinaryOp::Dot {
-                    let key = self.key()?;
+                    let ident = self.ident()?;
                     lhs = self.bump.alloc(Expr::StructAccess {
-                        span: lhs.span().to(key.span),
+                        span: lhs.span().to(ident.span),
                         expr: lhs,
-                        ident: key,
+                        ident,
                     });
                     continue;
                 }
@@ -661,7 +641,7 @@ impl<'src: 'ast, 'ast> Parser<'src, 'ast> {
     }
 
     fn struct_field(&mut self) -> Result<untyped::StructField<'ast>, Error> {
-        let ident = self.key()?;
+        let ident = self.ident()?;
         self.expect(TokenKind::Colon)?;
         let ty = self.type_expr()?;
         let span = ident.span;
