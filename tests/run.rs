@@ -1,4 +1,4 @@
-use kisu::{run, target::eval::Value};
+use mauve::{run, target::eval::Value};
 use std::collections::HashMap;
 use std::rc::Rc;
 

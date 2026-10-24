@@ -1,18 +1,14 @@
+
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./logo/dark.svg">
-    <img
-      src="./logo/light.svg"
-      height="240px"
-    >
-  </picture>
+Mauve
 </p>
 
 <p align="center">
-Experimental lazy purely functional configuration language
+Experimental programming language
 </p>
 
 Current syntax example:
+
 ```haskell
 struct Dependency {
   name: String,
@@ -31,7 +27,7 @@ let mk_dep = |name, version|: Dependency {
 };
 
 Package {
-  name = "kisu";
+  name = "mauve";
   edition = "2024";
 
   dependencies = [

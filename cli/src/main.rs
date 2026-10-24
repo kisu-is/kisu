@@ -1,17 +1,17 @@
 use indicatif::{ProgressBar, ProgressStyle};
-use kisu::{Type, Value, target::eval::NativeFn};
+use mauve::{Type, Value, target::eval::NativeFn};
 use miette::Result;
 use std::{collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
 use argh::FromArgs;
 
 #[derive(FromArgs)]
-/// Kisu cli
+/// Mauve cli
 struct Args {
     #[argh(positional)]
     path: Option<PathBuf>,
 
-    #[argh(option, description = "kisu code", short = 'c')]
+    #[argh(option, description = "mauve code", short = 'c')]
     code: Option<String>,
 }
 
@@ -72,7 +72,7 @@ fn run(source: &str) {
             .unwrap()
             .tick_strings(&["⢎ ", "⠎⠁", "⠊⠑", "⠈⠱", " ⡱", "⢀⡰", "⢄⡠", "⢆⡀", ""]),
     );
-    pb.set_message("Running kisu...");
-    let result = kisu::run_with_native_functions(source, builtins());
+    pb.set_message("Running mauve...");
+    let result = mauve::run_with_native_functions(source, builtins());
     pb.finish_with_message(format!("{result:?}"));
 }

@@ -6,7 +6,7 @@ fn structs() {
     }
 
     let config: Config =
-        kisu::from_str(r#"struct Config { name: String, } Config { name = "Joe"; }"#).unwrap();
+        mauve::from_str(r#"struct Config { name: String, } Config { name = "Joe"; }"#).unwrap();
 
     assert_eq!(
         config,
@@ -28,7 +28,7 @@ fn struct_nested() {
         name: String,
     }
 
-    let config: Config = kisu::from_str(
+    let config: Config = mauve::from_str(
         r#"
         struct User { name: String, }
         struct Config { user: User, }
@@ -51,14 +51,14 @@ fn struct_nested() {
 
 #[test]
 fn number() {
-    let config: f32 = kisu::from_str(r#" 10.0 "#).unwrap();
+    let config: f32 = mauve::from_str(r#" 10.0 "#).unwrap();
 
     assert_eq!(config, 10.0)
 }
 
 #[test]
 fn string() {
-    let config: String = kisu::from_str(r#" "Hello" + " world!" "#).unwrap();
+    let config: String = mauve::from_str(r#" "Hello" + " world!" "#).unwrap();
 
     assert_eq!(config, "Hello world!".to_string())
 }
@@ -70,7 +70,7 @@ fn list() {
         features: Vec<String>,
     }
 
-    let config: Config = kisu::from_str(
+    let config: Config = mauve::from_str(
         r#"struct Config { features: [String], } Config { features = [ "derive" ]; }"#,
     )
     .unwrap();

@@ -1,10 +1,10 @@
 [package]
-name = "kisu-cli"
+name = "mauve-cli"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 argh = "0.1.13"
 miette = { version = "7.6.0", features = ["fancy"] }
-kisu = { path = "../", default-features = false, features = ["impure"] }
+mauve = { path = "../", default-features = false, features = ["impure"] }
 indicatif = "0.18.3"

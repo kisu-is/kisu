@@ -24,13 +24,13 @@ use std::collections::HashMap;
 #[cfg(feature = "impure")]
 use std::rc::Rc;
 
-/// run kisu program with pretty printed errors
+/// run mauve program with pretty printed errors
 pub fn run(source: &str) -> Result<Value, miette::Error> {
     let source = String::from(source);
     eval(&source).map_err(|error| miette::Error::new(error).with_source_code(source))
 }
 
-/// run kisu program with pretty printed errors and custom native functions
+/// run mauve program with pretty printed errors and custom native functions
 #[cfg(feature = "impure")]
 pub fn run_with_native_functions(
     source: &str,
@@ -41,7 +41,7 @@ pub fn run_with_native_functions(
         .map_err(|error| miette::Error::new(error).with_source_code(source))
 }
 
-/// run kisu program with internal error type
+/// run mauve program with internal error type
 pub fn eval(source: &str) -> Result<Value, Error> {
     let bump = Bump::new();
 
@@ -71,7 +71,7 @@ pub fn eval(source: &str) -> Result<Value, Error> {
     Ok(result)
 }
 
-/// run kisu program with internal error type and custom native functions
+/// run mauve program with internal error type and custom native functions
 #[cfg(feature = "impure")]
 pub fn eval_with_native_functions(
     source: &str,

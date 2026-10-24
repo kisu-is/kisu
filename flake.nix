@@ -59,14 +59,14 @@
           };
 
           packages = rec {
-            kisu-cli = craneLib.buildPackage {
+            mauve-cli = craneLib.buildPackage {
               src = craneLib.cleanCargoSource ./.;
-              cargoBuildCommand = "cargo build --release -p kisu-cli";
-              pname = "kisu-cli";
+              cargoBuildCommand = "cargo build --release -p mauve-cli";
+              pname = "mauve-cli";
               inherit buildInputs;
             };
 
-            default = kisu-cli;
+            default = mauve-cli;
           };
 
         };

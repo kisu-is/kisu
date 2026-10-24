@@ -10,7 +10,7 @@ use bumpalo::collections::Vec;
 use miette::{Diagnostic, SourceSpan};
 
 #[derive(thiserror::Error, Diagnostic, Debug)]
-#[diagnostic(code(kisu::parser))]
+#[diagnostic(code(mauve::parser))]
 pub enum Error {
     #[error("unexpected token (expected {expected:?}, found {found:?})")]
     UnexpectedToken {

@@ -195,29 +195,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kisu"
-version = "0.1.3"
-dependencies = [
- "bumpalo",
- "indoc",
- "logos",
- "miette",
- "rpds",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "kisu-cli"
-version = "0.1.0"
-dependencies = [
- "argh",
- "indicatif",
- "kisu",
- "miette",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -261,6 +238,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d151b2ae667f69e10b8738f5cac0c746faa22b2e15ea7e83b55476afec3767dc"
 dependencies = [
  "logos-codegen",
+]
+
+[[package]]
+name = "mauve"
+version = "0.1.3"
+dependencies = [
+ "bumpalo",
+ "indoc",
+ "logos",
+ "miette",
+ "rpds",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "mauve-cli"
+version = "0.1.0"
+dependencies = [
+ "argh",
+ "indicatif",
+ "mauve",
+ "miette",
 ]
 
 [[package]]
